@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>tablefolk</Name>
+  <Repository>tablefolk:local</Repository>
+  <Registry/>
+  <Network>bridge</Network>
+  <Privileged>false</Privileged>
+  <Support/>
+  <Project/>
+  <Overview>古楓桌遊 GFBG：新版情書 2–6 人、私人房間、Email 登入。先依 README 在 Unraid 建置 tablefolk:local 映像並執行遷移。連接既有 PostgreSQL 與 SMTP。</Overview>
+  <Category>GameServers:</Category>
+  <WebUI>https://games.example.com</WebUI>
+  <ExtraParams>--init --read-only --tmpfs /tmp:size=16m,mode=1777 --security-opt no-new-privileges:true --cap-drop ALL</ExtraParams>
+  <Config Name="Web Port" Target="3000" Default="3000" Mode="tcp" Description="HTTPS 反向代理轉發至此主機埠，需支援 WebSocket。" Type="Port" Display="always" Required="true" Mask="false">3000</Config>
+  <Config Name="Public URL" Target="PUBLIC_URL" Default="https://games.example.com" Mode="" Description="實際 HTTPS 網址，不含尾端斜線或子路徑。" Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="PostgreSQL URL" Target="DATABASE_URL" Default="" Mode="" Description="專用 PostgreSQL 資料庫連線 URL，勿使用管理員帳號。" Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="SMTP Host" Target="SMTP_HOST" Default="" Mode="" Description="既有 SMTP 主機" Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="SMTP Port" Target="SMTP_PORT" Default="587" Mode="" Description="587 STARTTLS 或 465 TLS" Type="Variable" Display="always" Required="false" Mask="false">587</Config>
+  <Config Name="SMTP TLS" Target="SMTP_SECURE" Default="false" Mode="" Description="465 設 true；587 設 false，仍強制 STARTTLS。" Type="Variable" Display="always" Required="false" Mask="false">false</Config>
+  <Config Name="SMTP User" Target="SMTP_USER" Default="" Mode="" Description="SMTP 帳號" Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="SMTP Password" Target="SMTP_PASSWORD" Default="" Mode="" Description="SMTP 密碼" Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="SMTP From" Target="SMTP_FROM" Default="" Mode="" Description="已驗證的寄件者，例如 games@example.com" Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="Trusted proxy hops" Target="TRUST_PROXY_HOPS" Default="1" Mode="" Description="實際代理層數，主機埠只允許可信代理存取。" Type="Variable" Display="advanced" Required="true" Mask="false">1</Config>
+  <Config Name="Auto migrate" Target="AUTO_MIGRATE" Default="false" Mode="" Description="正式環境手動備份並執行遷移後再啟動。" Type="Variable" Display="advanced" Required="true" Mask="false">false</Config>
+</Container>

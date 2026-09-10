@@ -1,0 +1,807 @@
+import React, { useEffect, useRef, useState, type FormEvent } from "react";
+import { createRoot } from "react-dom/client";
+import { api, ApiError } from "./api";
+import type { RoomView, RoomAction } from "../shared/room";
+import type { GameInfo } from "../shared/game";
+import { tables } from "./games";
+import "./style.css";
+
+interface Me {
+  id: string;
+  name: string;
+  email: string | null;
+  csrf: string;
+  emailEnabled: boolean;
+  rooms: { id: string; code: string; game_id: string; status: string }[];
+}
+function App() {
+  const [me, setMe] = useState<Me>();
+  const [path, setPath] = useState(location.pathname);
+  const [games, setGames] = useState<GameInfo[]>([]);
+  const [room, setRoom] = useState<RoomView>();
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [connection, setConnection] = useState("連線中");
+  const [name, setName] = useState("");
+  const [code, setCode] = useState(
+    new URLSearchParams(location.search).get("join") || "",
+  );
+  const [panel, setPanel] = useState<"login" | "history" | null>(null);
+  const [email, setEmail] = useState("");
+  const [history, setHistory] = useState<any>();
+  const [first, setFirst] = useState("");
+  const [token] = useState(
+    () => new URLSearchParams(location.hash.slice(1)).get("token") || "",
+  );
+  const [pending, setPending] = useState<{
+    operationId: string;
+    version: number;
+    action: RoomAction;
+  }>();
+  const actionLock = useRef(false);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const roomId = path.match(/^\/rooms\/([a-f0-9-]+)$/)?.[1];
+  function navigate(to: string) {
+    window.history.pushState({}, "", to);
+    setPath(location.pathname);
+    setError("");
+    setNotice("");
+    setRoom(undefined);
+    setPending(undefined);
+  }
+  async function refreshMe() {
+    const value = await api<Me>("/me");
+    setMe(value);
+    setName(value.name === "旅人" ? "" : value.name);
+    return value;
+  }
+  async function refreshRoom(id = roomId) {
+    if (id) {
+      const value = await api<RoomView>(`/rooms/${id}`);
+      setRoom((old) =>
+        old && old.id === value.id && old.version > value.version ? old : value,
+      );
+    }
+  }
+  async function run(fn: () => Promise<void>) {
+    if (actionLock.current) return;
+    actionLock.current = true;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await fn();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      actionLock.current = false;
+      setBusy(false);
+    }
+  }
+  useEffect(() => {
+    const pop = () => {
+      setPath(location.pathname);
+      setRoom(undefined);
+      setPending(undefined);
+    };
+    addEventListener("popstate", pop);
+    void refreshMe().catch((e) => setError(e.message));
+    void api<GameInfo[]>("/games")
+      .then(setGames)
+      .catch((e) => setError(e.message));
+    return () => removeEventListener("popstate", pop);
+  }, []);
+  useEffect(() => {
+    if (token) window.history.replaceState({}, "", "/auth/confirm");
+  }, [token]);
+  useEffect(() => {
+    if (panel && !dialog.current?.open) dialog.current?.showModal();
+    else if (!panel) dialog.current?.close();
+  }, [panel]);
+  useEffect(() => {
+    if (!roomId || !me) return;
+    let stop = false;
+    let socket: WebSocket | undefined;
+    let retry: ReturnType<typeof setTimeout>;
+    let attempt = 0;
+    const connect = () => {
+      if (stop) return;
+      setConnection("連線中");
+      socket = new WebSocket(
+        `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws?room=${roomId}`,
+      );
+      socket.onopen = () => {
+        attempt = 0;
+        setConnection("已連線");
+      };
+      socket.onmessage = (event) => {
+        if (stop) return;
+        const message = JSON.parse(event.data);
+        if (message.type === "room") {
+          setRoom((old) =>
+            old &&
+            old.id === message.room.id &&
+            old.version > message.room.version
+              ? old
+              : message.room,
+          );
+          setConnection("已連線");
+        } else if (message.type === "error") setConnection(message.error);
+      };
+      socket.onclose = (event) => {
+        if (stop) return;
+        setConnection("重新連線中");
+        if (event.code === 4001 || event.code === 4003) {
+          setError("身份或座位已更新，請返回大廳重新加入。");
+          return;
+        }
+        retry = setTimeout(connect, Math.min(1000 * 2 ** attempt++, 10000));
+      };
+      socket.onerror = () => socket?.close();
+    };
+    void refreshRoom(roomId).catch((e) => setError(e.message));
+    connect();
+    const focus = () => {
+      void refreshRoom(roomId).catch((e) => setError(e.message));
+    };
+    addEventListener("focus", focus);
+    return () => {
+      stop = true;
+      clearTimeout(retry);
+      socket?.close();
+      removeEventListener("focus", focus);
+    };
+  }, [roomId, me?.id, me?.csrf]);
+  useEffect(() => {
+    if (room && !room.members.some((m) => m.id === first))
+      setFirst(room.members[0]?.id || "");
+  }, [room, first]);
+  async function saveName() {
+    if (!me) return;
+    if (!name.trim()) throw new Error("先取一個暱稱，讓朋友認出你。");
+    await api("/profile", { name: name.trim() }, me.csrf);
+  }
+  async function join(joinCode: string) {
+    await saveName();
+    const { id } = await api("/rooms/join", { code: joinCode }, me!.csrf);
+    await refreshMe();
+    navigate(`/rooms/${id}`);
+  }
+  async function action(action: RoomAction, retry = false) {
+    if (!room || !me) return;
+    await run(async () => {
+      const command =
+        retry && pending
+          ? pending
+          : { operationId: crypto.randomUUID(), version: room.version, action };
+      setPending(command);
+      try {
+        const result = await api(`/rooms/${room.id}/actions`, command, me.csrf);
+        setPending(undefined);
+        if (result.left) {
+          navigate("/");
+          await refreshMe();
+        } else await refreshRoom();
+      } catch (e) {
+        if (e instanceof ApiError && e.status >= 400 && e.status < 500)
+          setPending(undefined);
+        await refreshRoom().catch(() => {});
+        throw e;
+      }
+    });
+  }
+  const isHost = room?.hostId === me?.id;
+  const self = room?.members.find((m) => m.id === me?.id);
+  const Table = room && tables[room.gameId];
+  return (
+    <>
+      <header className="topbar">
+        <button
+          className="brand"
+          onClick={() => {
+            navigate("/");
+            void refreshMe().catch((e) => setError(e.message));
+          }}
+          aria-label="古楓桌遊，回到大廳"
+        >
+          <span className="brand-mark" aria-hidden="true">楓</span>
+          <span className="brand-wordmark" aria-hidden="true">
+            <span className="brand-full">古楓桌遊<small>GFBG</small></span>
+            <span className="brand-compact">GFBG</span>
+          </span>
+        </button>
+        <nav>
+          <span className="nav-note">把朋友，聚在一桌。</span>
+          {me?.email ? (
+            <>
+              <button
+                className="text-button"
+                onClick={() =>
+                  void run(async () => {
+                    setHistory(await api("/history"));
+                    setPanel("history");
+                  })
+                }
+              >
+                我的戰績
+              </button>
+              <button
+                className="avatar-button"
+                onClick={() => setPanel("login")}
+              >
+                {me.name.slice(0, 1)}
+              </button>
+            </>
+          ) : (
+            <button className="outline small" onClick={() => setPanel("login")}>
+              Email 登入 <span aria-hidden="true">↗</span>
+            </button>
+          )}
+        </nav>
+      </header>
+      <main>
+        {(error || notice) && (
+          <div
+            className={`message ${error ? "error" : ""}`}
+            role={error ? "alert" : "status"}
+          >
+            {error || notice}
+            <button
+              aria-label="關閉通知"
+              onClick={() => {
+                setError("");
+                setNotice("");
+              }}
+            >
+              ×
+            </button>
+          </div>
+        )}
+        {!me ? (
+          <section className="empty-state">
+            <span className="eyebrow">WELCOME TO THE TABLE</span>
+            <h1>為你留一個位子。</h1>
+            <p>正在連接牌桌服務。</p>
+            <button
+              onClick={() =>
+                void run(async () => {
+                  await refreshMe();
+                  setGames(await api("/games"));
+                })
+              }
+            >
+              重新連線
+            </button>
+          </section>
+        ) : path === "/auth/confirm" ? (
+          <section className="auth-confirm panel">
+            <span className="eyebrow">ONE LAST STEP</span>
+            <h1>
+              確認是你，
+              <br />
+              就能留住每場回憶。
+            </h1>
+            <p>按下確認才會使用登入連結。請使用原本要求登入的瀏覽器。</p>
+            <button
+              disabled={busy || !token}
+              onClick={() =>
+                void run(async () => {
+                  await api("/auth/confirm", { token }, me.csrf);
+                  await refreshMe();
+                  navigate("/");
+                  setNotice("登入成功，進行中的座位已保留。");
+                })
+              }
+            >
+              確認登入
+            </button>
+            {!token && <p>連結已移除或遺失，請重新索取驗證信。</p>}
+          </section>
+        ) : !roomId ? (
+          <>
+            <section className="hero">
+              <div>
+                <span className="eyebrow">
+                  <span className="tiny-seal">◇</span> GOOD COMPANY. GREAT
+                  GAMES.
+                </span>
+                <h1>
+                  今晚，
+                  <br />
+                  來點<span className="accent">心機。</span>
+                </h1>
+                <p>
+                  不必出門，也能圍坐一桌。
+                  <br />
+                  選一款遊戲，邀請朋友，好戲就開場。
+                </p>
+                <div className="hero-foot">
+                  <span>私人房間</span>
+                  <span>免註冊開玩</span>
+                  <span>手機也能加入</span>
+                </div>
+              </div>
+              <aside className="join-panel">
+                <span className="eyebrow">YOUR SEAT AT THE TABLE</span>
+                <h2>先讓朋友認出你</h2>
+                <label htmlFor="nickname">你的暱稱</label>
+                <input
+                  id="nickname"
+                  autoComplete="nickname"
+                  maxLength={24}
+                  placeholder="例如：今晚不當衛兵"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void run(() => join(code));
+                  }}
+                >
+                  <label htmlFor="room-code">有朋友開好房了？</label>
+                  <div className="join-row">
+                    <input
+                      id="room-code"
+                      autoCapitalize="characters"
+                      autoCorrect="off"
+                      maxLength={8}
+                      placeholder="8 碼房間代碼"
+                      value={code}
+                      onChange={(e) => setCode(e.target.value.toUpperCase())}
+                    />
+                    <button
+                      type="submit"
+                      disabled={busy || !name.trim() || code.length !== 8}
+                    >
+                      加入 <span aria-hidden="true">→</span>
+                    </button>
+                  </div>
+                </form>
+                <p className="muted small-copy">
+                  暱稱就能玩。登入後，可保存你的對局戰績。
+                </p>
+              </aside>
+            </section>
+            <section className="library">
+              <div className="section-heading">
+                <div>
+                  <span className="eyebrow">THE GAME SHELF</span>
+                  <h2>今天，玩哪一款？</h2>
+                </div>
+                <span className="muted">{games.length} 款桌遊 · 持續擴充</span>
+              </div>
+              {games.map((g) => (
+                <article className="game-feature" key={g.id}>
+                  <div className="game-cover">
+                    <div className="cover-line">A GAME OF RISK & DEDUCTION</div>
+                    <span className="cover-number">01</span>
+                    <div className="cover-title">
+                      <span>LOVE LETTER</span>
+                      <strong>情 書</strong>
+                      <i>心意只有一封，心機不只一種。</i>
+                    </div>
+                    <div className="cover-bottom">
+                      <span>SEIJI KANAI</span>
+                      <span>21 CARDS / 10 ROLES</span>
+                    </div>
+                  </div>
+                  <div className="game-description">
+                    <span className="pill">推理 · 運氣 · 心理戰</span>
+                    <h3>
+                      {g.name}
+                      <span>Love Letter</span>
+                    </h3>
+                    <p>{g.description}</p>
+                    <div className="game-facts">
+                      <div>
+                        <strong>2–6</strong>
+                        <span>位玩家</span>
+                      </div>
+                      <div>
+                        <strong>
+                          20<span> 分</span>
+                        </strong>
+                        <span>左右一局</span>
+                      </div>
+                      <div>
+                        <strong>輕量</strong>
+                        <span>容易上手</span>
+                      </div>
+                    </div>
+                    <button
+                      className="wide"
+                      disabled={busy || !name.trim()}
+                      onClick={() =>
+                        void run(async () => {
+                          await saveName();
+                          const { id } = await api(
+                            "/rooms",
+                            { gameId: g.id },
+                            me.csrf,
+                          );
+                          await refreshMe();
+                          navigate(`/rooms/${id}`);
+                        })
+                      }
+                    >
+                      建立私人房間 <span aria-hidden="true">↗</span>
+                    </button>
+                    <small>
+                      {name.trim()
+                        ? "把房間連結傳給朋友，就能一起玩。"
+                        : "先在上方填入暱稱，就能開桌。"}
+                    </small>
+                  </div>
+                </article>
+              ))}
+            </section>
+            {me.rooms.length > 0 && (
+              <section className="resume">
+                <div className="section-heading">
+                  <h2>你的牌桌還在</h2>
+                  <span className="muted">繼續剛才的對局</span>
+                </div>
+                <div className="resume-list">
+                  {me.rooms.map((r) => (
+                    <button
+                      className="resume-room"
+                      key={r.id}
+                      disabled={busy}
+                      onClick={() => void run(() => join(r.code))}
+                    >
+                      <span>
+                        情書{" "}
+                        <small>
+                          {r.status === "active" ? "進行中" : "等待朋友"}
+                        </small>
+                      </span>
+                      <strong>{r.code} →</strong>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
+            <footer>
+              <span>古楓桌遊 GFBG</span>
+              <span>一點運氣，一點默契。剩下的，交給朋友。</span>
+            </footer>
+          </>
+        ) : !room ? (
+          <section className="empty-state">
+            <h1>正在打開牌桌</h1>
+            <p>{connection}</p>
+            <button onClick={() => navigate("/")}>返回大廳</button>
+          </section>
+        ) : (
+          <>
+            <div className="room-heading">
+              <div>
+                <span className="eyebrow">PRIVATE TABLE / 情書</span>
+                <h1>
+                  {room.status === "waiting"
+                    ? "人到齊，就開場。"
+                    : room.status === "aborted"
+                      ? "這桌已結束。"
+                      : "一封信，無數可能。"}
+                </h1>
+              </div>
+              <div className="room-tools">
+                <span className="connection">{connection}</span>
+                <button
+                  className="outline small"
+                  onClick={() =>
+                    void run(async () => {
+                      const link = `${location.origin}/?join=${room.code}`;
+                      try {
+                        await navigator.clipboard.writeText(link);
+                        setNotice("邀請連結已複製。");
+                      } catch {
+                        setNotice(`邀請朋友開啟 ${link}`);
+                      }
+                    })
+                  }
+                >
+                  邀請朋友 · {room.code}
+                </button>
+              </div>
+            </div>
+            {pending && !busy && (
+              <div className="message" role="alert">
+                上次操作結果尚未確認。
+                <button onClick={() => void action(pending.action, true)}>
+                  重試同一操作
+                </button>
+              </div>
+            )}
+            {room.status === "waiting" ? (
+              <section className="waiting-layout">
+                <div className="panel seats-panel">
+                  <span className="eyebrow">THE COMPANY</span>
+                  <h2>
+                    這一桌的朋友{" "}
+                    <span className="muted">{room.members.length} / 6</span>
+                  </h2>
+                  <div className="waiting-seats">
+                    {room.members.map((m, i) => (
+                      <div className="waiting-seat" key={m.id}>
+                        <span className="seat-number">0{i + 1}</span>
+                        <span className="player-avatar">
+                          {m.name.slice(0, 1)}
+                        </span>
+                        <div>
+                          <strong>
+                            {m.name}
+                            {m.id === me.id && "（你）"}
+                          </strong>
+                          <small>
+                            {m.id === room.hostId ? "房主 · " : ""}
+                            {m.online ? "在線" : "離線"}
+                          </small>
+                        </div>
+                        <span className={m.ready ? "ready-label" : "muted"}>
+                          {m.ready ? "已準備" : "還沒準備"}
+                        </span>
+                      </div>
+                    ))}
+                    {Array.from(
+                      { length: Math.max(0, 2 - room.members.length) },
+                      (_, i) => (
+                        <div className="waiting-seat vacant" key={i}>
+                          <span className="player-avatar">＋</span>
+                          <span>為下一位朋友留座</span>
+                        </div>
+                      ),
+                    )}
+                  </div>
+                  <button
+                    className={self?.ready ? "outline wide" : "wide"}
+                    disabled={busy || !!pending}
+                    onClick={() =>
+                      void action({ type: "ready", ready: !self?.ready })
+                    }
+                  >
+                    {self?.ready ? "取消準備" : "我準備好了"}
+                  </button>
+                </div>
+                <aside className="panel start-panel">
+                  <span className="eyebrow">BEFORE WE BEGIN</span>
+                  <h2>
+                    少一點規則，
+                    <br />
+                    多一點心機。
+                  </h2>
+                  <ol>
+                    <li>輪到你時，抽一張、出一張。</li>
+                    <li>善用角色，猜出朋友手中的秘密。</li>
+                    <li>留到最後，或留下最大的牌。</li>
+                  </ol>
+                  <p className="muted">
+                    每輪贏得好感，率先達標就獲勝。詳細角色效果在牌桌上隨時可查。
+                  </p>
+                  {isHost ? (
+                    <>
+                      <label htmlFor="first-player">誰先開始？</label>
+                      <select
+                        id="first-player"
+                        value={first}
+                        onChange={(e) => setFirst(e.target.value)}
+                      >
+                        {room.members.map((m) => (
+                          <option value={m.id} key={m.id}>
+                            {m.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        className="wide"
+                        disabled={
+                          busy ||
+                          !!pending ||
+                          room.members.length < 2 ||
+                          !room.members.every((m) => m.ready)
+                        }
+                        onClick={() => void action({ type: "start", first })}
+                      >
+                        開始遊戲 →
+                      </button>
+                      <small>至少 2 人，且每位玩家都已準備。</small>
+                    </>
+                  ) : (
+                    <p>準備好後，等待房主開始。</p>
+                  )}
+                </aside>
+              </section>
+            ) : room.status === "aborted" ? (
+              <section className="empty-state panel">
+                <h2>對局已終止，不計入戰績。</h2>
+                <p>還想再來一局？回大廳重新開桌。</p>
+                <button
+                  onClick={() => {
+                    navigate("/");
+                    void refreshMe().catch((e) => setError(e.message));
+                  }}
+                >
+                  返回大廳
+                </button>
+              </section>
+            ) : Table && room.game ? (
+              <Table
+                room={room}
+                me={me.id}
+                busy={busy || !!pending || connection !== "已連線"}
+                onAction={(a) => void action(a)}
+              />
+            ) : (
+              <p>此遊戲介面尚未註冊。</p>
+            )}
+            <div className="room-bottom">
+              <button
+                className="text-button"
+                onClick={() => {
+                  navigate("/");
+                  void refreshMe().catch((e) => setError(e.message));
+                }}
+              >
+                ← 返回大廳（保留座位）
+              </button>
+              {room.status !== "active" && (
+                <button
+                  className="text-button"
+                  disabled={busy || !!pending}
+                  onClick={() => void action({ type: "leave" })}
+                >
+                  離開座位
+                </button>
+              )}
+              {isHost && ["active", "waiting"].includes(room.status) && (
+                <button
+                  className="text-button danger"
+                  disabled={busy || !!pending}
+                  onClick={() => {
+                    if (window.confirm("確定終止整場對局？這場不會計入戰績。"))
+                      void action({ type: "abort" });
+                  }}
+                >
+                  終止對局
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </main>
+    <dialog
+      ref={dialog}
+      aria-label={panel === "history" ? "我的戰績" : "Email 登入"}
+        onCancel={() => setPanel(null)}
+        onClick={(e) => {
+          if (e.target === dialog.current) setPanel(null);
+        }}
+      >
+        <div className="dialog-inner">
+          <button
+            className="close-dialog"
+            aria-label="關閉"
+            onClick={() => setPanel(null)}
+          >
+            ×
+          </button>
+          {panel === "login" ? (
+            <>
+              <span className="eyebrow">MAKE IT YOUR TABLE</span>
+              <h2>{me?.email ? "你的帳號" : "留住每一場精彩。"}</h2>
+              {me?.email ? (
+                <>
+                  <p>{me.email}</p>
+                  <p className="muted">完整對局會自動保存到你的戰績。</p>
+                  <button
+                    className="outline"
+                    disabled={busy}
+                    onClick={() =>
+                      void run(async () => {
+                        await api("/auth/logout", {}, me.csrf);
+                        await refreshMe();
+                        setPanel(null);
+                        navigate("/");
+                      })
+                    }
+                  >
+                    登出
+                  </button>
+                </>
+              ) : (
+                <form
+                  onSubmit={(e: FormEvent) => {
+                    e.preventDefault();
+                    void run(async () => {
+                      await api("/auth/request", { email }, me?.csrf);
+                      setPanel(null);
+                      setNotice(
+                        "驗證信已寄出，請在 15 分鐘內用同一瀏覽器開啟連結。",
+                      );
+                    });
+                  }}
+                >
+                  <p>輸入 Email，收到連結後確認登入。不需要密碼。</p>
+                  <label htmlFor="email">Email</label>
+                  <input
+                    id="email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    maxLength={254}
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@example.com"
+                  />
+                  <button className="wide" disabled={busy || !me?.emailEnabled}>
+                    {busy ? "寄送中…" : "寄送登入連結"}
+                  </button>
+                  {!me?.emailEnabled && (
+                    <p className="muted">Email 登入尚未開放，訪客仍可遊玩。</p>
+                  )}
+                  <p className="small-copy muted">
+                    對局結束前登入，即可保存這一場戰績。
+                  </p>
+                </form>
+              )}
+            </>
+          ) : panel === "history" && history ? (
+            <>
+              <span className="eyebrow">YOUR GAME JOURNAL</span>
+              <h2>每一局，都算數。</h2>
+              <div className="history-summary">
+                <div>
+                  <strong>{history.summary.played}</strong>
+                  <span>完成對局</span>
+                </div>
+                <div>
+                  <strong>{history.summary.won}</strong>
+                  <span>獲勝</span>
+                </div>
+                <div>
+                  <strong>
+                    {history.summary.played
+                      ? Math.round(
+                          (history.summary.won / history.summary.played) * 100,
+                        )
+                      : 0}
+                    %
+                  </strong>
+                  <span>勝率</span>
+                </div>
+              </div>
+              {history.matches.length ? (
+                <div className="history-list">
+                  {history.matches.map((m: any) => (
+                    <div key={m.match_id}>
+                      <span>
+                        情書{" "}
+                        <small>
+                          {new Date(m.finished_at).toLocaleDateString("zh-TW")}
+                        </small>
+                      </span>
+                      <strong>{m.score} 好感</strong>
+                      <span className={m.won ? "ready-label" : "muted"}>
+                        {m.won ? "獲勝" : "完成"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p>還沒有完整對局。找幾位朋友，開第一桌吧。</p>
+              )}
+            </>
+          ) : null}
+          {error && panel && (
+            <p role="alert" className="inline-error">
+              {error}
+            </p>
+          )}
+        </div>
+      </dialog>
+    </>
+  );
+}
+createRoot(document.getElementById("root")!).render(<App />);
