@@ -1,8 +1,10 @@
 import { loveLetter } from "./love-letter.js";
+import { shadowHunters } from "./shadow-hunters.js";
 import type { GameDefinition } from "../../shared/game.js";
 // The transport treats game state as opaque; validation belongs to its registered module.
 export const games = new Map<string, GameDefinition<any, any, any>>([
   [loveLetter.info.id, loveLetter],
+  [shadowHunters.info.id, shadowHunters],
 ]);
 export function getGame(id: string) {
   const game = games.get(id);

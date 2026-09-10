@@ -294,6 +294,26 @@ main {
   overflow: hidden;
   background: #1b2532;
 }
+.game-feature + .game-feature {
+  margin-top: 24px;
+}
+.game-feature.shadow-hunters .game-cover {
+  background:
+    radial-gradient(circle at 50% 48%, #463b64 0, #242541 38%, #121d2b 75%);
+  border-color: #6e648b;
+}
+.game-feature.shadow-hunters .game-cover:after {
+  content: "";
+  position: absolute;
+  width: 190px;
+  height: 190px;
+  border: 1px solid #b5a4d055;
+  border-radius: 50%;
+  left: calc(50% - 95px);
+  top: calc(50% - 95px);
+  z-index: -1;
+  box-shadow: 0 0 70px #927db833;
+}
 .game-cover {
   background: #682d43;
   min-height: 366px;
@@ -1106,6 +1126,171 @@ dialog::backdrop {
   color: var(--muted);
   font-size: 0.75rem;
 }
+.shadow-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 275px;
+  gap: 24px;
+}
+.shadow-board {
+  min-width: 0;
+  border: 1px solid #485064;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #121b29;
+}
+.shadow-status {
+  padding: 18px 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid #424b5d;
+  background: #1a2232;
+}
+.shadow-status strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 1.15rem;
+}
+.shadow-dice {
+  display: flex;
+  gap: 8px;
+}
+.shadow-dice span {
+  min-width: 60px;
+  padding: 8px 10px;
+  border: 1px solid #646e83;
+  border-radius: 7px;
+  color: #bfc7d6;
+  font-size: 0.75rem;
+}
+.shadow-dice b {
+  color: #f2c79f;
+  font-size: 1.15rem;
+  margin-left: 5px;
+}
+.shadow-zones {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 20px;
+  background:
+    linear-gradient(#0d1924dd, #0d1924dd),
+    repeating-linear-gradient(45deg, #87918f0c 0 1px, transparent 1px 16px);
+}
+.shadow-zone {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  gap: 8px;
+  border: 1px solid #62687b;
+  border-radius: 10px;
+  padding: 7px;
+  background: #ffffff06;
+}
+.shadow-area {
+  min-height: 145px;
+  padding: 14px;
+  border-radius: 7px;
+  background: linear-gradient(145deg, #273043, #1a2634);
+  position: relative;
+}
+.shadow-area > span {
+  position: absolute;
+  right: 11px;
+  top: 9px;
+  color: #e6b790;
+  font-family: Georgia, serif;
+}
+.shadow-area h3 {
+  font-size: 1rem;
+  padding-right: 40px;
+  margin-bottom: 8px;
+}
+.shadow-area p {
+  font-size: 0.75rem;
+  line-height: 1.55;
+  margin: 0;
+}
+.shadow-tokens {
+  display: flex;
+  gap: 5px;
+  margin-top: 10px;
+}
+.shadow-tokens span {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid #d1a783;
+  background: #63394d;
+  font-size: 0.75rem;
+}
+.shadow-decks {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  padding: 0 20px 20px;
+}
+.shadow-deck {
+  padding: 12px;
+  border-radius: 7px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.75rem;
+  border: 1px solid #596274;
+}
+.shadow-deck span { color: #aeb6c3; }
+.shadow-deck.white { background: #e8e2d7; color: #282635; }
+.shadow-deck.white span { color: #5d5961; }
+.shadow-deck.hermit { background: #324b3d; }
+.shadow-deck.black { background: #121216; }
+.shadow-players {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  padding: 20px;
+  border-top: 1px solid #3f4858;
+}
+.shadow-player {
+  padding: 13px;
+  background: #1b2635;
+  border: 1px solid #3d4858;
+  border-radius: 7px;
+}
+.shadow-player.current { border-color: #d7a981; }
+.shadow-player.dead { opacity: 0.55; }
+.shadow-player-head { display: flex; justify-content: space-between; gap: 8px; }
+.shadow-player-head span, .shadow-player > small { color: #aeb7c5; font-size: 0.75rem; }
+.shadow-equipment { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+.shadow-equipment span { padding: 4px 6px; background: #ffffff0b; border-radius: 4px; font-size: 0.7rem; }
+.shadow-equipment i { color: #858f9d; font-style: normal; font-size: 0.7rem; }
+.shadow-self {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(300px, 1.2fr);
+  gap: 16px;
+  padding: 20px;
+  background: #0e1824;
+  border-top: 1px solid #424b5b;
+}
+.shadow-identity, .shadow-actions {
+  padding: 20px;
+  background: #192535;
+  border: 1px solid #3e4b5d;
+  border-radius: 8px;
+}
+.shadow-identity { border-left: 4px solid #c7ab75; }
+.shadow-identity.faction-hunter { border-left-color: #719ed7; }
+.shadow-identity.faction-shadow { border-left-color: #b75e72; }
+.shadow-identity h2 { margin: 8px 0; }
+.shadow-identity h2 small { color: #aab3c0; font-weight: 400; margin-left: 8px; }
+.shadow-identity p { font-size: 0.8rem; line-height: 1.65; margin-bottom: 7px; }
+.shadow-actions h3 { font-size: 1rem; line-height: 1.55; }
+.shadow-option-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.shadow-option-list button { min-height: 44px; padding: 10px; font-size: 0.8rem; }
+.shadow-special-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.shadow-special-actions button { min-height: 44px; padding: 9px 13px; }
 @media (min-width: 1400px) {
   .hand-cards .playing-card {
     width: 175px;
@@ -1118,6 +1303,7 @@ dialog::backdrop {
   .game-layout {
     grid-template-columns: 1fr;
   }
+  .shadow-layout { grid-template-columns: 1fr; }
   .table-sidebar {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -1245,6 +1431,11 @@ dialog::backdrop {
   .table-sidebar {
     grid-template-columns: 1fr;
   }
+  .shadow-zones { grid-template-columns: 1fr; }
+  .shadow-zone { grid-template-columns: 1fr 1fr; grid-template-rows: none; }
+  .shadow-area { min-height: 135px; }
+  .shadow-self { grid-template-columns: 1fr; }
+  .shadow-decks { grid-template-columns: 1fr; }
   .opponents {
     padding: 14px;
     gap: 10px;
@@ -1318,6 +1509,21 @@ dialog::backdrop {
   }
 }
 @media (max-width: 420px) {
+  .room-bottom {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 12px;
+  }
+  .room-bottom button {
+    min-height: 44px;
+  }
+  .room-bottom button:first-child {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+  .room-bottom button:last-child {
+    text-align: right;
+  }
   main {
     padding: 0 16px;
   }

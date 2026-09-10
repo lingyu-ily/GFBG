@@ -140,6 +140,7 @@ export const loveLetter: GameDefinition<LLState, LLAction, LLView> = {
     minPlayers: 2,
     maxPlayers: 6,
     description: "一封信，十種角色。推敲對手的心思，把心意交到公主手中。",
+    firstPlayerPolicy: "host-choice",
   },
   initialize(seats: Seat[], first, random) {
     assert(

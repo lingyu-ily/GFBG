@@ -9,6 +9,7 @@ export interface GameInfo {
   minPlayers: number;
   maxPlayers: number;
   description: string;
+  firstPlayerPolicy: "host-choice" | "random";
 }
 export interface GameDefinition<S = unknown, A = unknown, V = unknown> {
   info: GameInfo;

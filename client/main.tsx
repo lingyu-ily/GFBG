@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { api, ApiError } from "./api";
 import type { RoomView, RoomAction } from "../shared/room";
 import type { GameInfo } from "../shared/game";
-import { tables } from "./games";
+import { gameUis } from "./games";
 import "./style.css";
 
 interface Me {
@@ -193,7 +193,9 @@ function App() {
   }
   const isHost = room?.hostId === me?.id;
   const self = room?.members.find((m) => m.id === me?.id);
-  const Table = room && tables[room.gameId];
+  const roomInfo = room && games.find((g) => g.id === room.gameId);
+  const roomUi = room && gameUis[room.gameId];
+  const Table = roomUi?.Table;
   return (
     <>
       <header className="topbar">
@@ -372,42 +374,43 @@ function App() {
                 </div>
                 <span className="muted">{games.length} 款桌遊 · 持續擴充</span>
               </div>
-              {games.map((g) => (
-                <article className="game-feature" key={g.id}>
+              {games.map((g) => {
+                const ui = gameUis[g.id];
+                if (!ui) return null;
+                return (
+                <article className={`game-feature ${ui.theme}`} key={g.id}>
                   <div className="game-cover">
-                    <div className="cover-line">A GAME OF RISK & DEDUCTION</div>
-                    <span className="cover-number">01</span>
+                    <div className="cover-line">{ui.coverLine}</div>
+                    <span className="cover-number">{ui.coverNumber}</span>
                     <div className="cover-title">
-                      <span>LOVE LETTER</span>
-                      <strong>情 書</strong>
-                      <i>心意只有一封，心機不只一種。</i>
+                      <span>{ui.englishName.toUpperCase()}</span>
+                      <strong>{g.name.split("").join(" ")}</strong>
+                      <i>{ui.coverTagline}</i>
                     </div>
                     <div className="cover-bottom">
-                      <span>SEIJI KANAI</span>
-                      <span>21 CARDS / 10 ROLES</span>
+                      <span>{ui.coverCredit}</span>
+                      <span>{ui.coverDetail}</span>
                     </div>
                   </div>
                   <div className="game-description">
-                    <span className="pill">推理 · 運氣 · 心理戰</span>
+                    <span className="pill">{ui.genres}</span>
                     <h3>
                       {g.name}
-                      <span>Love Letter</span>
+                      <span>{ui.englishName}</span>
                     </h3>
                     <p>{g.description}</p>
                     <div className="game-facts">
                       <div>
-                        <strong>2–6</strong>
+                        <strong>{g.minPlayers}–{g.maxPlayers}</strong>
                         <span>位玩家</span>
                       </div>
                       <div>
-                        <strong>
-                          20<span> 分</span>
-                        </strong>
+                        <strong>{ui.duration}</strong>
                         <span>左右一局</span>
                       </div>
                       <div>
-                        <strong>輕量</strong>
-                        <span>容易上手</span>
+                        <strong>{ui.complexity}</strong>
+                        <span>{ui.complexityNote}</span>
                       </div>
                     </div>
                     <button
@@ -435,7 +438,8 @@ function App() {
                     </small>
                   </div>
                 </article>
-              ))}
+                );
+              })}
             </section>
             {me.rooms.length > 0 && (
               <section className="resume">
@@ -452,7 +456,7 @@ function App() {
                       onClick={() => void run(() => join(r.code))}
                     >
                       <span>
-                        情書{" "}
+                        {games.find((g) => g.id === r.game_id)?.name || r.game_id}{" "}
                         <small>
                           {r.status === "active" ? "進行中" : "等待朋友"}
                         </small>
@@ -478,13 +482,13 @@ function App() {
           <>
             <div className="room-heading">
               <div>
-                <span className="eyebrow">PRIVATE TABLE / 情書</span>
+                <span className="eyebrow">PRIVATE TABLE / {roomInfo?.name || room.gameId}</span>
                 <h1>
                   {room.status === "waiting"
                     ? "人到齊，就開場。"
                     : room.status === "aborted"
                       ? "這桌已結束。"
-                      : "一封信，無數可能。"}
+                      : roomUi?.activeTitle || "對局進行中。"}
                 </h1>
               </div>
               <div className="room-tools">
@@ -521,7 +525,7 @@ function App() {
                   <span className="eyebrow">THE COMPANY</span>
                   <h2>
                     這一桌的朋友{" "}
-                    <span className="muted">{room.members.length} / 6</span>
+                    <span className="muted">{room.members.length} / {roomInfo?.maxPlayers}</span>
                   </h2>
                   <div className="waiting-seats">
                     {room.members.map((m, i) => (
@@ -546,7 +550,7 @@ function App() {
                       </div>
                     ))}
                     {Array.from(
-                      { length: Math.max(0, 2 - room.members.length) },
+                      { length: Math.max(0, (roomInfo?.minPlayers || 2) - room.members.length) },
                       (_, i) => (
                         <div className="waiting-seat vacant" key={i}>
                           <span className="player-avatar">＋</span>
@@ -567,46 +571,34 @@ function App() {
                 </div>
                 <aside className="panel start-panel">
                   <span className="eyebrow">BEFORE WE BEGIN</span>
-                  <h2>
-                    少一點規則，
-                    <br />
-                    多一點心機。
-                  </h2>
+                  <h2>{roomUi?.waitingTitle}</h2>
                   <ol>
-                    <li>輪到你時，抽一張、出一張。</li>
-                    <li>善用角色，猜出朋友手中的秘密。</li>
-                    <li>留到最後，或留下最大的牌。</li>
+                    {roomUi?.waitingSteps.map((step) => <li key={step}>{step}</li>)}
                   </ol>
-                  <p className="muted">
-                    每輪贏得好感，率先達標就獲勝。詳細角色效果在牌桌上隨時可查。
-                  </p>
+                  <p className="muted">{roomUi?.waitingSummary}</p>
                   {isHost ? (
                     <>
-                      <label htmlFor="first-player">誰先開始？</label>
-                      <select
-                        id="first-player"
-                        value={first}
-                        onChange={(e) => setFirst(e.target.value)}
-                      >
-                        {room.members.map((m) => (
-                          <option value={m.id} key={m.id}>
-                            {m.name}
-                          </option>
-                        ))}
-                      </select>
+                      {roomInfo?.firstPlayerPolicy === "host-choice" ? (
+                        <>
+                          <label htmlFor="first-player">誰先開始？</label>
+                          <select id="first-player" value={first} onChange={(e) => setFirst(e.target.value)}>
+                            {room.members.map((m) => <option value={m.id} key={m.id}>{m.name}</option>)}
+                          </select>
+                        </>
+                      ) : <p className="muted">開始時會隨機決定第一位玩家。</p>}
                       <button
                         className="wide"
                         disabled={
                           busy ||
                           !!pending ||
-                          room.members.length < 2 ||
+                          room.members.length < (roomInfo?.minPlayers || 2) ||
                           !room.members.every((m) => m.ready)
                         }
-                        onClick={() => void action({ type: "start", first })}
+                        onClick={() => void action({ type: "start", ...(roomInfo?.firstPlayerPolicy === "host-choice" ? { first } : {}) })}
                       >
                         開始遊戲 →
                       </button>
-                      <small>至少 2 人，且每位玩家都已準備。</small>
+                      <small>至少 {roomInfo?.minPlayers || 2} 人，且每位玩家都已準備。</small>
                     </>
                   ) : (
                     <p>準備好後，等待房主開始。</p>
@@ -777,15 +769,17 @@ function App() {
                   {history.matches.map((m: any) => (
                     <div key={m.match_id}>
                       <span>
-                        情書{" "}
+                        {games.find((g) => g.id === m.game_id)?.name || m.game_id}{" "}
                         <small>
                           {new Date(m.finished_at).toLocaleDateString("zh-TW")}
                         </small>
                       </span>
-                      <strong>{m.score} 好感</strong>
-                      <span className={m.won ? "ready-label" : "muted"}>
-                        {m.won ? "獲勝" : "完成"}
-                      </span>
+                      <strong>{gameUis[m.game_id]?.score(m.score) || m.score}</strong>
+                      {gameUis[m.game_id]?.showHistoryStatus && (
+                        <span className={m.won ? "ready-label" : "muted"}>
+                          {m.won ? "獲勝" : "完成"}
+                        </span>
+                      )}
                     </div>
                   ))}
                 </div>

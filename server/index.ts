@@ -173,7 +173,7 @@ app.get("/api/rooms/:id", async (req, res) =>
 );
 const roomAction = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ready"), ready: z.boolean() }),
-  z.object({ type: z.literal("start"), first: uuid }),
+  z.object({ type: z.literal("start"), first: uuid.optional() }),
   z.object({ type: z.literal("abort") }),
   z.object({ type: z.literal("leave") }),
   z.object({ type: z.literal("game"), action: z.unknown() }),

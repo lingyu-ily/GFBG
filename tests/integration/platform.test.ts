@@ -13,6 +13,7 @@ import { SMTPServer } from "smtp-server";
 import { WebSocket } from "ws";
 import type { RoomView, RoomAction } from "../../shared/room.js";
 import type { LLView } from "../../shared/love-letter.js";
+import type { SHView } from "../../shared/shadow-hunters.js";
 
 let db: EmbeddedPostgres;
 let sql: pg.Pool;
@@ -158,7 +159,7 @@ class Browser {
     this.me = await this.ok("/me");
     return this;
   }
-  async view(id: string): Promise<RoomView<LLView>> {
+  async view<T = LLView>(id: string): Promise<RoomView<T>> {
     return this.ok(`/rooms/${id}`);
   }
   async command(id: string, action: RoomAction) {
@@ -170,11 +171,11 @@ class Browser {
     });
   }
 }
-async function table(n: number) {
+async function table(n: number, gameId = "love-letter") {
   const players: Browser[] = [];
   for (let i = 0; i < n; i++)
     players.push(await new Browser().boot(`玩家${i}`));
-  const { id } = await players[0].ok("/rooms", { gameId: "love-letter" });
+  const { id } = await players[0].ok("/rooms", { gameId });
   const room = await players[0].view(id);
   for (const p of players.slice(1)) {
     await p.ok("/rooms/join", { code: room.code });
@@ -359,6 +360,56 @@ test("Active game snapshot and operation survive restart with no duplicate draw 
   assert.equal((await p.ok(`/rooms/${t.id}/actions`, command)).duplicate, true);
   assert.deepEqual(await p.view(t.id), before);
 });
+test(
+  "Shadow Hunters opens a private 4-player table, survives restart and records one complete result",
+  { timeout: 120000 },
+  async () => {
+    const t = await table(4, "shadow-hunters");
+    await start(t);
+    const initial = await t.players[0].view<SHView>(t.id);
+    assert.equal(initial.gameId, "shadow-hunters");
+    assert.ok(initial.game!.players[0].character);
+    assert.equal(initial.game!.players[1].character, undefined);
+    assert.ok(t.players.some((p) => p.me.id === initial.game!.current));
+    await stopApp();
+    await startApp();
+    assert.deepEqual(await t.players[0].view<SHView>(t.id), initial);
+
+    let actions = 0;
+    while (actions++ < 2500) {
+      const publicView = await t.players[0].view<SHView>(t.id);
+      if (publicView.status === "finished") break;
+      let actor: Browser | undefined;
+      let own: RoomView<SHView> | undefined;
+      for (const browser of t.players) {
+        const candidate = await browser.view<SHView>(t.id);
+        if (candidate.game!.legal.pending) {
+          actor = browser;
+          own = candidate;
+          break;
+        }
+      }
+      assert.ok(actor && own, "a player must own the pending decision");
+      const pending = own.game!.legal.pending!;
+      if (pending.options.some((o) => o.id === "roll")) {
+        await actor.command(t.id, { type: "game", action: { type: "roll", promptId: pending.id } });
+        continue;
+      }
+      let option = pending.options[0];
+      if (pending.kind === "area") option = pending.options.find((o) => o.id === "skip")!;
+      if (pending.kind === "attack") option = pending.options.find((o) => o.id !== "skip") || pending.options[0];
+      if (pending.kind === "turn-end") option = pending.options.find((o) => o.id === "end")!;
+      if (["counter", "charles"].includes(pending.kind)) option = pending.options.at(-1)!;
+      await actor.command(t.id, { type: "game", action: { type: "choose", promptId: pending.id, optionId: option.id } });
+    }
+    const finished = await t.players[0].view<SHView>(t.id);
+    assert.equal(finished.status, "finished", `did not finish in ${actions} actions`);
+    assert.ok(finished.game!.players.every((p) => p.character));
+    assert.equal((await sql.query("SELECT count(*) FROM matches WHERE id=$1", [t.id])).rows[0].count, "1");
+    assert.equal((await sql.query("SELECT count(*) FROM results WHERE match_id=$1", [t.id])).rows[0].count, "4");
+    assert.ok((await sql.query("SELECT score FROM results WHERE match_id=$1", [t.id])).rows.every((r) => r.score === 0 || r.score === 1));
+  },
+);
 test("Email GET does not consume; login rotates cookie, preserves seat, rejects replay/expiry/other browser", async () => {
   await sql.query("DELETE FROM rate_limits");
   const t = await table(2);

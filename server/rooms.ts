@@ -187,9 +187,18 @@ export async function applyRoomAction(
         409,
         "需要足夠玩家且所有人準備完成。",
       );
+      const first =
+        game.info.firstPlayerPolicy === "random"
+          ? members[randomInt(members.length)].player_id
+          : action.first;
+      requireCondition(
+        !!first && members.some((m) => m.player_id === first),
+        400,
+        "先手玩家不存在。",
+      );
       room.state = game.initialize(
         members.map((m) => ({ id: m.player_id, name: m.name })),
-        action.first,
+        first,
         randomInt,
       );
       room.status = "active";
