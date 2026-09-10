@@ -4,6 +4,8 @@ import type { LLView } from "../shared/love-letter";
 import { LoveLetterTable } from "./table";
 import { ShadowHuntersTable } from "./shadow-hunters";
 import type { SHView } from "../shared/shadow-hunters";
+import type { SRView } from "../shared/shadow-raiders";
+import { ShadowRaidersTable } from "./shadow-raiders";
 export interface TableProps {
   room: RoomView;
   me: string;
@@ -74,6 +76,27 @@ export const gameUis: Record<string, GameUiDefinition> = {
     score: (score) => (score ? "勝利" : "敗北"),
     showHistoryStatus: false,
     theme: "shadow-hunters",
+  },
+  "shadow-raiders-airship": {
+    Table: (props) => <ShadowRaidersTable {...props} room={props.room as RoomView<SRView>} />,
+    englishName: "Shadow Raiders · Queen Majesty",
+    coverNumber: "03",
+    coverLine: "BATTLE ABOVE THE SHADOWS",
+    coverTagline: "升空之後，每個方向都是戰場。",
+    coverCredit: "UNOFFICIAL AIRSHIP RULESET",
+    coverDetail: "30 ROLES / 60 CARDS",
+    genres: "隱藏身分 · 推理 · 環狀戰鬥",
+    duration: "40–75 分",
+    complexity: "中重量",
+    complexityNote: "飛船擴充",
+    roomTitle: "女王陛下的飛行船已經升空。",
+    activeTitle: "環狀戰線，全面交火。",
+    waitingTitle: "登船，辨認盟友，鎖定左翼。",
+    waitingSteps: ["擲出 10 登上中央飛船。", "攻擊所在地與逆時針左鄰地點。", "善用推理牌與角色能力改變戰局。"],
+    waitingSummary: "奇襲者、暗影與市民各有勝利條件；飛船與所有外圍地點互相在攻擊範圍內。",
+    score: (score) => (score ? "勝利" : "敗北"),
+    showHistoryStatus: false,
+    theme: "shadow-raiders-airship",
   },
 };
 export const tables: Record<string, ComponentType<TableProps>> = Object.fromEntries(

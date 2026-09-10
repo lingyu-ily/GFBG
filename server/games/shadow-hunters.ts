@@ -203,6 +203,14 @@ function finishTurn(s: SHState) {
 }
 
 type DamageSource = { kind: "attack" | "black" | "white" | "hermit" | "area" | "ability"; card?: string; attacker?: string };
+function markDead(s: SHState, target: SHPlayer) {
+  if (!target.alive) return false;
+  target.alive = false;
+  target.revealed = true;
+  target.location = null;
+  log(s, `${target.name}（${character(target).name}）死亡。`);
+  return true;
+}
 function applyDamage(s: SHState, target: SHPlayer, amount: number, source: DamageSource) {
   if (!target.alive || amount <= 0) return false;
   if (target.barrier) amount = 0;
@@ -215,13 +223,7 @@ function applyDamage(s: SHState, target: SHPlayer, amount: number, source: Damag
   }
   target.damage = Math.min(character(target).maxHp, target.damage + amount);
   log(s, `${target.name} 受到 ${amount} 點傷害。`);
-  if (target.damage >= character(target).maxHp) {
-    target.alive = false;
-    target.revealed = true;
-    target.location = null;
-    log(s, `${target.name}（${character(target).name}）死亡。`);
-    return true;
-  }
+  if (target.damage >= character(target).maxHp) return markDead(s, target);
   return false;
 }
 function heal(s: SHState, target: SHPlayer, amount: number) {
@@ -299,7 +301,9 @@ function continueAfter(s: SHState, after: After) {
 }
 function finishDeaths(s: SHState, deaths: SHPlayer[], killer: SHPlayer | undefined, byAttack: boolean, after: After) {
   recordDeaths(s, deaths, killer, byAttack);
-  const victims = deaths.filter((d) => d.equipment.length && killer && d.id !== killer.id).map((d) => d.id);
+  const victims = byAttack && killer?.alive
+    ? deaths.filter((d) => d.equipment.length && d.id !== killer.id).map((d) => d.id)
+    : [];
   deaths
     .filter((d) => !victims.includes(d.id))
     .forEach((d) => d.equipment.splice(0).forEach((e) => discard(s, e)));
@@ -466,7 +470,7 @@ function performAttack(s: SHState, attacker: SHPlayer, chosen: SHPlayer, random:
   const raw = diceType === "d4" ? dice.d4 : Math.abs(dice.d6 - dice.d4);
   const amount = attackDamage(attacker, raw);
   const targets = has(attacker, "machine-gun") && !isCounter ? attackTargets(s, attacker) : [chosen];
-  if (!isCounter && attacker.character === "bob" && attacker.revealed && !attacker.abilityDisabled && s.players.length <= 6 && amount >= 2 && chosen.equipment.length && targets.length === 1) {
+  if (!isCounter && attacker.character === "bob" && attacker.revealed && !attacker.abilityDisabled && !attacker.abilityUsed && s.players.length <= 6 && amount >= 2 && chosen.equipment.length && targets.length === 1) {
     prompt(s, attacker.id, "bob", `要對 ${chosen.name} 造成 ${amount} 點傷害，或改偷一件裝備？`, [{ id: "damage", label: `造成 ${amount} 點傷害` }, ...chosen.equipment.map((e) => ({ id: e.id, label: `偷取${cardById(e.card).title}` }))], { target: chosen.id, amount });
     return;
   }
@@ -610,6 +614,7 @@ function choose(s: SHState, id: string, random: Random) {
     } else {
       const index = target.equipment.findIndex((e) => e.id === id);
       actor.equipment.push(target.equipment.splice(index, 1)[0]);
+      actor.abilityUsed = true;
       continueAfter(s, "turn");
     }
   } else if (q.kind === "counter") {
@@ -638,7 +643,14 @@ function choose(s: SHState, id: string, random: Random) {
     const ability = q.data.ability as string;
     actor.abilityUsed = !["ultra-soul"].includes(ability);
     if (ability === "ellen") { target.abilityDisabled = true; target.barrier = false; }
-    else if (ability === "fu-ka") { target.damage = 7; if (target.damage >= character(target).maxHp) { target.alive = false; target.revealed = true; recordDeaths(s, [target], actor, false); } }
+    else if (ability === "fu-ka") {
+      target.damage = 7;
+      const died = target.damage >= character(target).maxHp && markDead(s, target);
+      if (died) {
+        finishDeaths(s, [target], actor, false, "none");
+        if (s.phase === "finished") return;
+      }
+    }
     else {
       const dice = ability === "franklin" ? roll(s, random, "雷擊", "d6").d6 : ability === "george" ? roll(s, random, "破壞", "d4").d4 : 3;
       const died = applyDamage(s, target, dice, { kind: "ability", attacker: actor.id });
@@ -649,8 +661,13 @@ function choose(s: SHState, id: string, random: Random) {
 }
 function startTurnPromptPreserving(s: SHState, actor: SHPlayer) {
   const opts = [{ id: "roll", label: "擲 D4 + D6 移動" }];
-  if (actor.revealed && actor.character === "emi" && actor.location)
-    s.areas.filter((_, i) => Math.abs(i - s.areas.findIndex((a) => a.id === actor.location)) === 1).forEach((a) => opts.push({ id: `teleport:${a.id}`, label: `瞬移到${a.name}` }));
+  if (actor.revealed && !actor.abilityDisabled && actor.character === "emi" && actor.location) {
+    const index = s.areas.findIndex((a) => a.id === actor.location);
+    for (const offset of [-1, 1]) {
+      const area = s.areas[(index + offset + s.areas.length) % s.areas.length];
+      opts.push({ id: `teleport:${area.id}`, label: `瞬移到${area.name}` });
+    }
+  }
   prompt(s, actor.id, "move", "移動是每回合的必要行動。", opts);
 }
 

@@ -202,6 +202,40 @@ test("狼人反擊、死亡戰利品與空牌堆重洗皆可從提示狀態續�
   assert.equal(recycled.discards.white.length, 0);
 });
 
+test("Bob 的 4–6 人搶奪只能使用一次", () => {
+  const attackRoll = (max: number) => max === 4 ? 0 : 3;
+  const s = game.initialize(seats(4), "p0", rng(50));
+  s.players[0].character = "bob";
+  s.players[0].revealed = true;
+  s.players[0].location = s.areas[0].id;
+  s.players[1].location = s.areas[0].id;
+  s.players[1].equipment = [{ id: "bob-loot", card: "talisman" }];
+  s.phase = "attack";
+  s.pending = { id: "sh-bob", actor: "p0", kind: "attack", text: "攻擊", options: [{ id: "p1", label: "玩家1" }], data: {} };
+  const choice = game.transition(s, "p0", { type: "choose", promptId: "sh-bob", optionId: "p1" }, attackRoll);
+  assert.equal(choice.pending?.kind, "bob");
+  const stolen = game.transition(choice, "p0", { type: "choose", promptId: choice.pending!.id, optionId: "bob-loot" }, attackRoll);
+  assert.equal(stolen.players[0].abilityUsed, true);
+
+  stolen.phase = "attack";
+  stolen.players[1].equipment = [{ id: "second-loot", card: "mystic-compass" }];
+  stolen.pending = { id: "sh-bob-2", actor: "p0", kind: "attack", text: "攻擊", options: [{ id: "p1", label: "玩家1" }], data: {} };
+  const second = game.transition(stolen, "p0", { type: "choose", promptId: "sh-bob-2", optionId: "p1" }, attackRoll);
+  assert.notEqual(second.pending?.kind, "bob");
+});
+
+test("非攻擊死亡丟棄裝備，死亡來源不能取得戰利品", () => {
+  const s = game.initialize(seats(4), "p0", rng(51));
+  s.players[1].damage = characterById(s.players[1].character).maxHp - 2;
+  s.players[1].equipment = [{ id: "discard-me", card: "mystic-compass" }];
+  s.pending = { id: "sh-card-death", actor: "p0", kind: "card-target", text: "蝙蝠", options: [{ id: "p1", label: "玩家1" }], data: { effect: "bat" } };
+  const after = game.transition(s, "p0", { type: "choose", promptId: "sh-card-death", optionId: "p1" }, rng(52));
+  assert.equal(after.players[1].alive, false);
+  assert.equal(after.players[0].equipment.some((e) => e.id === "discard-me"), false);
+  assert.equal(after.discards.white.some((e) => e.id === "discard-me"), true);
+  assert.notEqual(after.pending?.kind, "loot");
+});
+
 function automatedTurn(s: SHState, random: (max: number) => number) {
   const q = s.pending!;
   const legal = game.legalActions(s, q.actor) as any;

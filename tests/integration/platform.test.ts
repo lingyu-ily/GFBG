@@ -14,6 +14,7 @@ import { WebSocket } from "ws";
 import type { RoomView, RoomAction } from "../../shared/room.js";
 import type { LLView } from "../../shared/love-letter.js";
 import type { SHView } from "../../shared/shadow-hunters.js";
+import type { SRView } from "../../shared/shadow-raiders.js";
 
 let db: EmbeddedPostgres;
 let sql: pg.Pool;
@@ -407,6 +408,57 @@ test(
     assert.ok(finished.game!.players.every((p) => p.character));
     assert.equal((await sql.query("SELECT count(*) FROM matches WHERE id=$1", [t.id])).rows[0].count, "1");
     assert.equal((await sql.query("SELECT count(*) FROM results WHERE match_id=$1", [t.id])).rows[0].count, "4");
+    assert.ok((await sql.query("SELECT score FROM results WHERE match_id=$1", [t.id])).rows.every((r) => r.score === 0 || r.score === 1));
+  },
+);
+test(
+  "Shadow Raiders Airship completes a private 10-player HTTP/WebSocket game and records one result",
+  { timeout: 180000 },
+  async () => {
+    const t = await table(10, "shadow-raiders-airship");
+    await start(t);
+    const initial = await t.players[0].view<SRView>(t.id);
+    assert.equal(initial.gameId, "shadow-raiders-airship");
+    assert.equal(initial.members.length, 10);
+    assert.ok(initial.game!.players[0].character);
+    assert.equal(initial.game!.players[1].character, undefined);
+    const ws = new WebSocket(url.replace("http:", "ws:") + `/ws?room=${t.id}`, { headers: { Cookie: t.players[0].cookie, Origin: url } });
+    const frame = await Promise.race([once(ws, "message"), new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Airship websocket timeout")), 5000).unref())]);
+    const message = JSON.parse(String(frame[0]));
+    assert.equal(message.room.game.players[1].character, undefined);
+    ws.close();
+    await stopApp();
+    await startApp();
+    assert.deepEqual(await t.players[0].view<SRView>(t.id), initial);
+
+    let actions = 0;
+    while (actions++ < 5000) {
+      const publicView = await t.players[0].view<SRView>(t.id);
+      if (publicView.status === "finished") break;
+      let actor: Browser | undefined;
+      let own: RoomView<SRView> | undefined;
+      for (const browser of t.players) {
+        const candidate = await browser.view<SRView>(t.id);
+        if (candidate.game!.legal.pending) { actor = browser; own = candidate; break; }
+      }
+      assert.ok(actor && own, "a player must own the pending Airship decision");
+      const pending = own.game!.legal.pending!;
+      if (pending.options.some((o) => o.id === "roll")) {
+        await actor.command(t.id, { type: "game", action: { type: "roll", promptId: pending.id } });
+        continue;
+      }
+      let option = pending.options[0];
+      if (pending.kind === "area") option = pending.options.find((o) => o.id === "use")!;
+      if (pending.kind === "attack") option = pending.options.find((o) => !["skip", "parasol"].includes(o.id)) || pending.options.at(-1)!;
+      if (["turn-end", "counter", "craig"].includes(pending.kind)) option = pending.options.at(-1)!;
+      if (["urlich", "reasoning-payment", "venom"].includes(pending.kind)) option = pending.options[0];
+      await actor.command(t.id, { type: "game", action: { type: "choose", promptId: pending.id, optionId: option.id } });
+    }
+    const finished = await t.players[0].view<SRView>(t.id);
+    assert.equal(finished.status, "finished", `Airship did not finish in ${actions} actions`);
+    assert.ok(finished.game!.players.every((p) => p.character));
+    assert.equal((await sql.query("SELECT count(*) FROM matches WHERE id=$1", [t.id])).rows[0].count, "1");
+    assert.equal((await sql.query("SELECT count(*) FROM results WHERE match_id=$1", [t.id])).rows[0].count, "10");
     assert.ok((await sql.query("SELECT score FROM results WHERE match_id=$1", [t.id])).rows.every((r) => r.score === 0 || r.score === 1));
   },
 );
