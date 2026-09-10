@@ -1,0 +1,117 @@
+name: Test and publish Docker image
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install locked dependencies and required binaries
+        run: |
+          npm ci --ignore-scripts
+          npm rebuild esbuild @embedded-postgres/linux-x64
+      - name: Typecheck and build
+        run: npm run build
+      - name: Test game rules
+        run: npm test
+      - name: Prepare PostgreSQL 18 backup tools
+        run: |
+          docker pull postgres:18
+          mkdir -p "$RUNNER_TEMP/pg-bin"
+          install -m 755 .github/scripts/pg-client.sh "$RUNNER_TEMP/pg-bin/pg_dump"
+          install -m 755 .github/scripts/pg-client.sh "$RUNNER_TEMP/pg-bin/pg_restore"
+          echo "PG_BIN=$RUNNER_TEMP/pg-bin" >> "$GITHUB_ENV"
+      - name: Test PostgreSQL, SMTP, multiplayer and backup restoration
+        run: npm run test:integration
+
+  image:
+    name: Build, smoke test and publish image
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Determine registry image name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - name: Prepare tags and OCI labels
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ steps.image.outputs.name }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=tag
+            type=sha,format=long
+          labels: |
+            org.opencontainers.image.title=古楓桌遊 GFBG
+            org.opencontainers.image.description=Private multiplayer board games with PostgreSQL persistence
+      - name: Build local image for smoke testing
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: gfbg:ci
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Verify migrations and container health against PostgreSQL
+        run: bash .github/scripts/smoke-image.sh
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish tested image
+        id: publish
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+      - name: Summarize published image
+        if: steps.publish.outcome == 'success'
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          DIGEST: ${{ steps.publish.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          {
+            echo "### 古楓桌遊 GFBG"
+            echo 'Published tags:'
+            printf '\n\x60\x60\x60text\n%s\n\x60\x60\x60\n' "$TAGS"
+            printf '\nImmutable image: \x60%s@%s\x60\n' "$IMAGE" "$DIGEST"
+          } >> "$GITHUB_STEP_SUMMARY"

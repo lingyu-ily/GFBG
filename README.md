@@ -26,6 +26,12 @@ npm run preview:local
 
 `npm run dev` 的前端為 5173，後端為 3000。如果需在其他裝置測試，設定正確的 PUBLIC_URL、Vite host 與代理；正式部署統一由單一 HTTPS origin 提供頁面、API 與 WebSocket。
 
+## GitHub 自動建置 Docker
+
+推送 main 後，由 GitHub Actions 測試、建置並發布 `ghcr.io/lingyu-ily/gfbg:latest`。Unraid 可直接拉取映像，無須本機建置。
+
+請依 [GitHub Actions 與 GHCR 部署指南](docs/github-actions.md) 設定；使用 `compose.ghcr.yaml` 部署預建映像。下方 `compose.yaml` 流程則保留給需要自行建置的情況。
+
 ## 部署到 Unraid
 
 ### 1. 準備專用 PostgreSQL 資料庫
@@ -74,7 +80,7 @@ docker compose up -d
 
 Compose 只啟動應用程式，不建立 PostgreSQL 容器。應用程式的正式資料都在 PostgreSQL，不需要應用程式資料卷。採非 root、唯讀檔案系統與受限暫存目錄；保留啟動與錯誤碼日誌，不記錄秘密手牌、驗證 token 或帳密。
 
-**使用 Unraid WebUI 管理的替代方式：** 先在 Unraid 建置 `tablefolk:local` 並執行上述一次性遷移，再把 `deploy/unraid-template.xml` 放到 `/boot/config/plugins/dockerMan/templates-user/my-tablefolk.xml`，從 Docker → Add Container 選擇模板，填入連線設定，將 WebUI 改為實際網域。啟動後打開 Auto-Start。不要同時用 Compose 和 WebUI 啟動同名服務。
+**使用 Unraid WebUI 管理的替代方式：** 先依 GHCR 部署指南登入、拉取映像並執行一次性遷移，再把 `deploy/unraid-template.xml` 放到 `/boot/config/plugins/dockerMan/templates-user/my-tablefolk.xml`，從 Docker → Add Container 選擇模板，填入連線設定，將 WebUI 改為實際網域。啟動後打開 Auto-Start。不要同時用 Compose 和 WebUI 啟動同名服務。
 
 ### 4. 接上既有 HTTPS 入口
 

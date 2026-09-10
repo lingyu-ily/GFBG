@@ -1,13 +1,13 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>tablefolk</Name>
-  <Repository>tablefolk:local</Repository>
+  <Repository>ghcr.io/lingyu-ily/gfbg:latest</Repository>
   <Registry/>
   <Network>bridge</Network>
   <Privileged>false</Privileged>
   <Support/>
   <Project/>
-  <Overview>古楓桌遊 GFBG：新版情書 2–6 人、私人房間、Email 登入。先依 README 在 Unraid 建置 tablefolk:local 映像並執行遷移。連接既有 PostgreSQL 與 SMTP。</Overview>
+  <Overview>古楓桌遊 GFBG：新版情書 2–6 人、私人房間、Email 登入。先依 GitHub Actions 部署指南登入 GHCR、拉取映像並執行遷移。連接既有 PostgreSQL 與 SMTP。</Overview>
   <Category>GameServers:</Category>
   <WebUI>https://games.example.com</WebUI>
   <ExtraParams>--init --read-only --tmpfs /tmp:size=16m,mode=1777 --security-opt no-new-privileges:true --cap-drop ALL</ExtraParams>
