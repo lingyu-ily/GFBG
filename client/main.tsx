@@ -729,14 +729,13 @@ function App() {
           }}
           aria-label="古楓桌遊，回到大廳"
         >
-          <span className="brand-mark" aria-hidden="true">楓</span>
+          <img className="brand-mark" src="/logo-min.png" alt="" aria-hidden="true" />
           <span className="brand-wordmark" aria-hidden="true">
             <span className="brand-full">古楓桌遊<small>GFBG</small></span>
             <span className="brand-compact">GFBG</span>
           </span>
         </button>
         <nav>
-          <span className="nav-note">把朋友，聚在一桌。</span>
           {me?.isMember ? (
             <button
               className="avatar-button"
@@ -1006,11 +1005,6 @@ function App() {
                 <button className="hero-games-button" onClick={() => navigate("/games")}>
                   選擇遊戲 <span aria-hidden="true">→</span>
                 </button>
-                <div className="hero-foot">
-                  <span>公開或私人房間</span>
-                  <span>免註冊開玩</span>
-                  <span>手機也能加入</span>
-                </div>
               </div>
               <aside className="join-panel">
                 <span className="eyebrow">YOUR SEAT AT THE TABLE</span>
@@ -1068,7 +1062,6 @@ function App() {
                   <span className="eyebrow">PUBLIC TABLES</span>
                   <h2>現在有人開桌</h2>
                 </div>
-                <span className="muted">即時更新</span>
               </div>
               {publicRoomList.length ? (
                 <div className="public-room-list">

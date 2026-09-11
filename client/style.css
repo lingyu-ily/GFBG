@@ -186,25 +186,16 @@ small {
   margin-top: 3px;
 }
 .brand-mark {
-  border: 1px solid #ae8b70;
   height: 43px;
   width: 43px;
-  display: grid;
-  place-items: center;
-  font-family: serif;
-  font-weight: 400;
-  color: var(--accent);
-  letter-spacing: 0;
-  transform: rotate(-4deg);
+  display: block;
+  object-fit: contain;
+  flex: 0 0 auto;
 }
 nav {
   display: flex;
   align-items: center;
   gap: 26px;
-}
-.nav-note {
-  font-size: 0.875rem;
-  color: var(--muted);
 }
 main {
   max-width: 1440px;
@@ -274,16 +265,6 @@ main {
 }
 .tiny-seal {
   margin-right: 9px;
-}
-.hero-foot {
-  display: flex;
-  gap: 20px;
-  color: #b7bfcb;
-  font-size: 0.875rem;
-}
-.hero-foot span + span {
-  border-left: 1px solid #596270;
-  padding-left: 20px;
 }
 .join-panel {
   background: var(--panel);
@@ -1654,9 +1635,6 @@ dialog.auth-dialog {
     height: 78px;
     padding: 0 24px;
   }
-  .nav-note {
-    display: none;
-  }
   .hero {
     grid-template-columns: 1fr;
     padding: 42px 0;
@@ -1808,13 +1786,6 @@ dialog.auth-dialog {
   }
   .account-content {
     padding: 26px;
-  }
-  .hero-foot {
-    gap: 12px;
-    font-size: 0.75rem;
-  }
-  .hero-foot span + span {
-    padding-left: 12px;
   }
 }
 @media (max-width: 600px) {
