@@ -30,6 +30,8 @@ import {
   createRoom,
   joinRoom,
   roomView,
+  watchRoom,
+  publicRooms,
   applyRoomAction,
   heartbeat,
   transferHosts,
@@ -112,6 +114,11 @@ app.use("/api", async (req, res, next) => {
   next();
 });
 const uuid = z.string().uuid();
+const roomCode = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-HJ-NP-Z2-9]{8}$/);
 const nickname = z
   .string()
   .trim()
@@ -270,34 +277,59 @@ app.get("/api/history", async (_req, res) => {
   res.json({ matches: rows.rows, summary: summary.rows[0] });
 });
 app.post("/api/rooms", async (req, res) => {
-  const { gameId } = z
-    .object({ gameId: z.enum([...games.keys()] as [string, ...string[]]) })
-    .parse(req.body);
-  await rateLimit(`create:${res.locals.who.player_id}`, 10, 3600);
-  res.json({ id: await createRoom(res.locals.who, gameId) });
-});
-app.post("/api/rooms/join", async (req, res) => {
-  const { code } = z
+  const { gameId, isPublic } = z
     .object({
-      code: z
-        .string()
-        .trim()
-        .toUpperCase()
-        .regex(/^[A-HJ-NP-Z2-9]{8}$/),
+      gameId: z.enum([...games.keys()] as [string, ...string[]]),
+      isPublic: z.boolean().default(false),
     })
     .parse(req.body);
+  await rateLimit(`create:${res.locals.who.player_id}`, 10, 3600);
+  const id = await createRoom(res.locals.who, gameId, isPublic);
+  res.json({ id });
+  void broadcastLobby();
+});
+app.post("/api/rooms/join", async (req, res) => {
+  const { code } = z.object({ code: roomCode }).parse(req.body);
   await rateLimit(`join:${res.locals.who.player_id}`, 30, 60);
   const id = await joinRoom(res.locals.who, code);
   closeSession(res.locals.who.token_hash);
   res.json({ id });
   void broadcast(id);
+  void broadcastLobby();
+});
+app.get("/api/rooms/public", async (_req, res) =>
+  res.json({ rooms: await publicRooms(spectatorCounts()) }),
+);
+app.get("/api/rooms/watch/:code", async (req, res) => {
+  const who: Identity = res.locals.who;
+  requireCondition(who.name !== "旅人", 403, "請先設定暱稱再開始旁觀。");
+  await rateLimit(`watch:${who.player_id}`, 60, 60);
+  const view = await watchRoom(
+    roomCode.parse(req.params.code),
+    who.player_id,
+    spectatorIds,
+  );
+  const current = spectatorIds(view.id);
+  requireCondition(
+    current.includes(who.player_id) || current.length < 50,
+    429,
+    "這個房間已有 50 位旁觀者，請稍後再試。",
+  );
+  res.json(view);
 });
 app.get("/api/rooms/:id", async (req, res) =>
-  res.json(await roomView(uuid.parse(req.params.id), res.locals.who.player_id)),
+  res.json(
+    await roomView(
+      uuid.parse(req.params.id),
+      res.locals.who.player_id,
+      spectatorIds(uuid.parse(req.params.id)),
+    ),
+  ),
 );
 const roomAction = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ready"), ready: z.boolean() }),
   z.object({ type: z.literal("start"), first: uuid.optional() }),
+  z.object({ type: z.literal("setVisibility"), isPublic: z.boolean() }),
   z.object({ type: z.literal("returnToLobby") }),
   z.object({ type: z.literal("abort") }),
   z.object({ type: z.literal("leave") }),
@@ -321,6 +353,7 @@ app.post("/api/rooms/:id/actions", async (req, res) => {
   );
   res.json({ ok: true, ...result });
   void broadcast(id);
+  void broadcastLobby();
 });
 app.use("/api", (_req, res) =>
   res.status(404).json({ error: "找不到這個操作。" }),
@@ -357,13 +390,52 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 
 const server = createServer(app);
 const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 });
-interface Peer {
+interface PeerBase {
   ws: WebSocket;
-  room: string;
   who: Identity;
   alive: boolean;
 }
+interface PlayerPeer extends PeerBase {
+  kind: "room";
+  role: "player";
+  room: string;
+}
+interface SpectatorPeer extends PeerBase {
+  kind: "room";
+  role: "spectator";
+  room: string;
+  code: string;
+}
+interface LobbyPeer extends PeerBase {
+  kind: "lobby";
+}
+type RoomPeer = PlayerPeer | SpectatorPeer;
+type Peer = RoomPeer | LobbyPeer;
 const peers = new Set<Peer>();
+function spectatorIds(room: string) {
+  return [
+    ...new Set(
+      [...peers]
+        .filter(
+          (peer): peer is SpectatorPeer =>
+            peer.kind === "room" &&
+            peer.role === "spectator" &&
+            peer.room === room,
+        )
+        .map((peer) => peer.who.player_id),
+    ),
+  ];
+}
+function spectatorCounts() {
+  const counts = new Map<string, Set<string>>();
+  for (const peer of peers) {
+    if (peer.kind !== "room" || peer.role !== "spectator") continue;
+    const ids = counts.get(peer.room) || new Set<string>();
+    ids.add(peer.who.player_id);
+    counts.set(peer.room, ids);
+  }
+  return new Map([...counts].map(([room, ids]) => [room, ids.size]));
+}
 function closeSession(token: string) {
   for (const p of peers)
     if (p.who.token_hash === token) p.ws.close(4001, "session changed");
@@ -372,9 +444,12 @@ function closeUserSessions(userId: string) {
   for (const p of peers)
     if (p.who.user_id === userId) p.ws.close(4001, "account session changed");
 }
-async function sendView(p: Peer) {
+async function sendRoomView(p: RoomPeer) {
   try {
-    const view = await roomView(p.room, p.who.player_id);
+    const view =
+      p.role === "player"
+        ? await roomView(p.room, p.who.player_id, spectatorIds(p.room))
+        : await watchRoom(p.code, p.who.player_id, spectatorIds);
     if (p.ws.readyState === WebSocket.OPEN)
       p.ws.send(JSON.stringify({ type: "room", room: view }));
   } catch (e) {
@@ -385,10 +460,59 @@ async function sendView(p: Peer) {
       );
   }
 }
+async function sendLobby(p: LobbyPeer) {
+  try {
+    const rooms = await publicRooms(spectatorCounts());
+    if (p.ws.readyState === WebSocket.OPEN)
+      p.ws.send(JSON.stringify({ type: "publicRooms", rooms }));
+  } catch {
+    if (p.ws.readyState === WebSocket.OPEN)
+      p.ws.send(
+        JSON.stringify({ type: "error", error: "公開房清單暫時無法更新。" }),
+      );
+  }
+}
+async function sendPeer(peer: Peer) {
+  return peer.kind === "lobby" ? sendLobby(peer) : sendRoomView(peer);
+}
 async function broadcast(id: string) {
   await Promise.allSettled(
-    [...peers].filter((p) => p.room === id).map(sendView),
+    [...peers]
+      .filter((peer): peer is RoomPeer => peer.kind === "room" && peer.room === id)
+      .map(sendRoomView),
   );
+}
+async function broadcastLobby() {
+  await Promise.allSettled(
+    [...peers]
+      .filter((peer): peer is LobbyPeer => peer.kind === "lobby")
+      .map(sendLobby),
+  );
+}
+function trackPeer(peer: Peer) {
+  peers.add(peer);
+  peer.ws.on("pong", () => {
+    peer.alive = true;
+    if (peer.kind === "room" && peer.role === "player")
+      void heartbeat(peer.room, peer.who.player_id).catch(() => {});
+  });
+  peer.ws.on("error", () => peer.ws.terminate());
+  peer.ws.on("close", () => {
+    if (!peers.delete(peer)) return;
+    if (peer.kind === "room" && peer.role === "spectator") {
+      void broadcast(peer.room);
+      void broadcastLobby();
+    }
+  });
+  if (peer.kind === "lobby") void sendLobby(peer);
+  else if (peer.role === "spectator") {
+    void broadcast(peer.room);
+    void broadcastLobby();
+  } else {
+    void heartbeat(peer.room, peer.who.player_id)
+      .then(() => broadcast(peer.room))
+      .catch(() => sendRoomView(peer));
+  }
 }
 server.on("upgrade", async (req, socket, head) => {
   try {
@@ -399,7 +523,6 @@ server.on("upgrade", async (req, socket, head) => {
       403,
       "origin",
     );
-    const room = uuid.parse(url.searchParams.get("room"));
     const who = await identity(req);
     requireCondition(who, 401, "session");
     requireCondition(
@@ -407,20 +530,41 @@ server.on("upgrade", async (req, socket, head) => {
       429,
       "connections",
     );
-    await roomView(room, who.player_id);
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      const peer: Peer = { ws, room, who, alive: true };
-      peers.add(peer);
-      ws.on("pong", () => {
-        peer.alive = true;
-        void heartbeat(room, who.player_id).catch(() => {});
-      });
-      ws.on("error", () => ws.terminate());
-      ws.on("close", () => peers.delete(peer));
-      void heartbeat(room, who.player_id)
-        .then(() => broadcast(room))
-        .catch(() => sendView(peer));
-    });
+    if (url.searchParams.get("lobby") === "1") {
+      wss.handleUpgrade(req, socket, head, (ws) =>
+        trackPeer({ kind: "lobby", ws, who, alive: true }),
+      );
+      return;
+    }
+    if (url.searchParams.get("mode") === "spectator") {
+      requireCondition(who.name !== "旅人", 403, "nickname");
+      await rateLimit(`watch-ws:${who.player_id}`, 60, 60);
+      const code = roomCode.parse(url.searchParams.get("code"));
+      const view = await watchRoom(code, who.player_id, spectatorIds);
+      const current = spectatorIds(view.id);
+      requireCondition(
+        current.includes(who.player_id) || current.length < 50,
+        429,
+        "spectators",
+      );
+      wss.handleUpgrade(req, socket, head, (ws) =>
+        trackPeer({
+          kind: "room",
+          role: "spectator",
+          ws,
+          room: view.id,
+          code,
+          who,
+          alive: true,
+        }),
+      );
+      return;
+    }
+    const room = uuid.parse(url.searchParams.get("room"));
+    await roomView(room, who.player_id, spectatorIds(room));
+    wss.handleUpgrade(req, socket, head, (ws) =>
+      trackPeer({ kind: "room", role: "player", ws, room, who, alive: true }),
+    );
   } catch {
     socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
     socket.destroy();
@@ -448,7 +592,7 @@ const timer = setInterval(async () => {
       }
     }
     await transferHosts();
-    await Promise.allSettled([...peers].map(sendView));
+    await Promise.allSettled([...peers].map(sendPeer));
   } catch {
     for (const p of peers)
       if (p.ws.readyState === WebSocket.OPEN)

@@ -45,6 +45,9 @@ test("玩家視角不洩漏其他角色、牌序、私人提示或 prompt contin
   assert.ok(!json.includes('"decks"'));
   assert.ok(!json.includes('"data"'));
   assert.ok(!json.includes(s.players[1].character));
+  const spectator = game.spectatorView(s);
+  assert.ok(spectator.players.every((player) => player.character === undefined));
+  assert.deepEqual(spectator.legal, { canUseAbility: false });
   assert.throws(() => game.parseAction({ type: "reveal" }));
   assert.throws(() => game.transition(s, "r1", { type: "roll", promptId: s.pending!.id }, rng()));
   assert.throws(() => game.transition(s, "r0", { type: "roll", promptId: "expired" }, rng()));

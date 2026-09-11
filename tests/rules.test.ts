@@ -93,6 +93,10 @@ test("Priest secrets only reach the actor, never the target or third player", ()
     assert.ok(!text.includes('"reserve":'));
     assert.ok(!text.includes("recipients"));
   }
+  const spectator = game.spectatorView(s);
+  assert.ok(spectator.players.every((player) => player.hand === undefined));
+  assert.deepEqual(spectator.legal, { cards: [], chancellor: false });
+  assert.ok(!spectator.logs.some((log) => log.text.includes("查看到")));
 });
 test("Baron compares privately, eliminates lower card, tie leaves both alive", () => {
   let s = play(scenario([[3, 4], [7], [0]]), 3, "p1");

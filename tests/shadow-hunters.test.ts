@@ -56,6 +56,9 @@ test("玩家視角隱藏其他身分、牌庫順序、內部提示與私人紀�
   assert.ok(!text.includes('"data"'));
   assert.ok(!text.includes('"winQualified"'));
   assert.ok(!text.includes(s.players[1].character));
+  const spectator = game.spectatorView(s);
+  assert.ok(spectator.players.every((player) => player.character === undefined));
+  assert.deepEqual(spectator.legal, { canReveal: false, canUseAbility: false });
   s = game.transition(s, "p1", { type: "reveal" }, rng(8));
   assert.equal(game.playerView(s, "p0").players[1].character?.id, s.players[1].character);
 });

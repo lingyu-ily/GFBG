@@ -669,5 +669,6 @@ export const shadowRaidersAirship: GameDefinition<SRState, SRAction, SRView> = {
       logs: s.logs.filter((l) => !l.recipients || l.recipients.includes(id)).map((l) => ({ text: l.text })), legal: this.legalActions(s, id) as SRLegal,
     };
   },
+  spectatorView(s) { return this.playerView(s, ""); },
   result(s) { return s.phase === "finished" ? { scores: Object.fromEntries(s.players.map((p) => [p.id, s.winners.includes(p.id) ? 1 : 0])), winners: s.winners } : null; },
 };

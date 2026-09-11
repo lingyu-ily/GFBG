@@ -325,6 +325,9 @@ export const loveLetter: GameDefinition<LLState, LLAction, LLView> = {
         .map((l) => ({ text: l.text })),
     };
   },
+  spectatorView(s) {
+    return this.playerView(s, "");
+  },
   result(s) {
     return s.phase === "matchEnd"
       ? {

@@ -1,7 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import { api, ApiError, deleteAvatar, uploadAvatar } from "./api";
-import type { RoomView, RoomAction } from "../shared/room";
+import type {
+  PublicRoomSummary,
+  RoomView,
+  RoomAction,
+} from "../shared/room";
 import type { GameInfo } from "../shared/game";
 import { gameUis } from "./games";
 import { PlayerAvatar } from "./avatar";
@@ -24,6 +28,7 @@ function App() {
   const [me, setMe] = useState<Me>();
   const [path, setPath] = useState(location.pathname);
   const [games, setGames] = useState<GameInfo[]>([]);
+  const [publicRoomList, setPublicRoomList] = useState<PublicRoomSummary[]>([]);
   const [room, setRoom] = useState<RoomView>();
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -45,6 +50,7 @@ function App() {
   const [avatarFile, setAvatarFile] = useState<File>();
   const [history, setHistory] = useState<any>();
   const [first, setFirst] = useState("");
+  const [createPublic, setCreatePublic] = useState(false);
   const [token] = useState(
     () => new URLSearchParams(location.hash.slice(1)).get("token") || "",
   );
@@ -60,6 +66,7 @@ function App() {
     [avatarFile],
   );
   const roomId = path.match(/^\/rooms\/([a-f0-9-]+)$/)?.[1];
+  const watchCode = path.match(/^\/watch\/([A-HJ-NP-Z2-9]{8})$/)?.[1];
   function navigate(to: string) {
     window.history.pushState({}, "", to);
     setPath(location.pathname);
@@ -74,9 +81,14 @@ function App() {
     setName(value.name === "旅人" ? "" : value.name);
     return value;
   }
-  async function refreshRoom(id = roomId) {
-    if (id) {
-      const value = await api<RoomView>(`/rooms/${id}`);
+  async function refreshRoom() {
+    const endpoint = roomId
+      ? `/rooms/${roomId}`
+      : watchCode
+        ? `/rooms/watch/${watchCode}`
+        : "";
+    if (endpoint) {
+      const value = await api<RoomView>(endpoint);
       setRoom((old) =>
         old && old.id === value.id && old.version > value.version ? old : value,
       );
@@ -128,7 +140,42 @@ function App() {
     [avatarPreview],
   );
   useEffect(() => {
-    if (!roomId || !me) return;
+    if (path !== "/" || !me) return;
+    let stop = false;
+    let socket: WebSocket | undefined;
+    let retry: ReturnType<typeof setTimeout>;
+    let attempt = 0;
+    const connect = () => {
+      if (stop) return;
+      socket = new WebSocket(
+        `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws?lobby=1`,
+      );
+      socket.onopen = () => {
+        attempt = 0;
+      };
+      socket.onmessage = (event) => {
+        const message = JSON.parse(event.data);
+        if (!stop && message.type === "publicRooms") setPublicRoomList(message.rooms);
+      };
+      socket.onclose = () => {
+        if (!stop)
+          retry = setTimeout(connect, Math.min(1000 * 2 ** attempt++, 10000));
+      };
+      socket.onerror = () => socket?.close();
+    };
+    void api<{ rooms: PublicRoomSummary[] }>("/rooms/public")
+      .then((value) => setPublicRoomList(value.rooms))
+      .catch(() => {});
+    connect();
+    return () => {
+      stop = true;
+      clearTimeout(retry);
+      socket?.close();
+    };
+  }, [path, me?.id, me?.csrf]);
+  useEffect(() => {
+    if ((!roomId && !watchCode) || !me || (watchCode && me.name === "旅人"))
+      return;
     let stop = false;
     let socket: WebSocket | undefined;
     let retry: ReturnType<typeof setTimeout>;
@@ -136,8 +183,11 @@ function App() {
     const connect = () => {
       if (stop) return;
       setConnection("連線中");
+      const query = roomId
+        ? `room=${roomId}`
+        : `mode=spectator&code=${watchCode}`;
       socket = new WebSocket(
-        `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws?room=${roomId}`,
+        `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws?${query}`,
       );
       socket.onopen = () => {
         attempt = 0;
@@ -161,17 +211,27 @@ function App() {
         if (stop) return;
         setConnection("重新連線中");
         if (event.code === 4001 || event.code === 4003) {
-          setError("身份或座位已更新，請返回大廳重新加入。");
+          setError(
+            watchCode
+              ? "旁觀連線已失效，請確認房號或返回大廳。"
+              : "身份或座位已更新，請返回大廳重新加入。",
+          );
           return;
         }
         retry = setTimeout(connect, Math.min(1000 * 2 ** attempt++, 10000));
       };
       socket.onerror = () => socket?.close();
     };
-    void refreshRoom(roomId).catch((e) => setError(e.message));
-    connect();
+    if (watchCode)
+      void refreshRoom()
+        .then(connect)
+        .catch((e) => setError(e.message));
+    else {
+      void refreshRoom().catch((e) => setError(e.message));
+      connect();
+    }
     const focus = () => {
-      void refreshRoom(roomId).catch((e) => setError(e.message));
+      void refreshRoom().catch((e) => setError(e.message));
     };
     addEventListener("focus", focus);
     return () => {
@@ -180,7 +240,7 @@ function App() {
       socket?.close();
       removeEventListener("focus", focus);
     };
-  }, [roomId, me?.id, me?.csrf]);
+  }, [roomId, watchCode, me?.id, me?.csrf, me?.name]);
   useEffect(() => {
     if (room && !room.members.some((m) => m.id === first))
       setFirst(room.members[0]?.id || "");
@@ -196,6 +256,19 @@ function App() {
     const { id } = await api("/rooms/join", { code: joinCode }, me!.csrf);
     await refreshMe();
     navigate(`/rooms/${id}`);
+  }
+  async function watch(roomCode: string) {
+    await saveName();
+    await refreshMe();
+    navigate(`/watch/${roomCode.trim().toUpperCase()}`);
+  }
+  async function copyLink(link: string, message: string) {
+    try {
+      await navigator.clipboard.writeText(link);
+      setNotice(message);
+    } catch {
+      setNotice(`請分享這個連結：${link}`);
+    }
   }
   async function action(action: RoomAction, retry = false) {
     if (!room || !me) return;
@@ -221,6 +294,7 @@ function App() {
     });
   }
   const isHost = room?.hostId === me?.id;
+  const isSpectator = room?.viewerRole === "spectator";
   const self = room?.members.find((m) => m.id === me?.id);
   const roomInfo = room && games.find((g) => g.id === room.gameId);
   const roomUi = room && gameUis[room.gameId];
@@ -369,7 +443,7 @@ function App() {
               </button>
               <span className="eyebrow">THE GAME SHELF</span>
               <h1>今天，玩哪一款？</h1>
-              <p>選好遊戲、開一間私人房，再把邀請連結傳給朋友。</p>
+              <p>選好遊戲、決定是否公開，再把邀請連結傳給朋友。</p>
             </section>
             <section className="games-profile panel">
               <div>
@@ -388,6 +462,17 @@ function App() {
                   onChange={(e) => setName(e.target.value)}
                   readOnly={me.isMember}
                 />
+                <label className="visibility-choice">
+                  <input
+                    type="checkbox"
+                    checked={createPublic}
+                    onChange={(event) => setCreatePublic(event.target.checked)}
+                  />
+                  <span>
+                    <strong>公開顯示在首頁</strong>
+                    <small>任何人都能找到、加入或旁觀；之後仍可切回私人。</small>
+                  </span>
+                </label>
               </div>
             </section>
             <section className="library games-library">
@@ -445,7 +530,7 @@ function App() {
                             await saveName();
                             const { id } = await api(
                               "/rooms",
-                              { gameId: g.id },
+                              { gameId: g.id, isPublic: createPublic },
                               me.csrf,
                             );
                             await refreshMe();
@@ -453,7 +538,7 @@ function App() {
                           })
                         }
                       >
-                        建立私人房間 <span aria-hidden="true">↗</span>
+                        建立{createPublic ? "公開" : "私人"}房間 <span aria-hidden="true">↗</span>
                       </button>
                       <small>
                         {name.trim()
@@ -470,7 +555,7 @@ function App() {
               <span>一點運氣，一點默契。剩下的，交給朋友。</span>
             </footer>
           </>
-        ) : !roomId ? (
+        ) : !roomId && !watchCode ? (
           <>
             <section className="hero">
               <div>
@@ -492,7 +577,7 @@ function App() {
                   選擇遊戲 <span aria-hidden="true">→</span>
                 </button>
                 <div className="hero-foot">
-                  <span>私人房間</span>
+                  <span>公開或私人房間</span>
                   <span>免註冊開玩</span>
                   <span>手機也能加入</span>
                 </div>
@@ -532,12 +617,73 @@ function App() {
                     >
                       加入 <span aria-hidden="true">→</span>
                     </button>
+                    <button
+                      type="button"
+                      className="outline"
+                      disabled={busy || !name.trim() || code.length !== 8}
+                      onClick={() => void run(() => watch(code))}
+                    >
+                      旁觀
+                    </button>
                   </div>
                 </form>
                 <p className="muted small-copy">
                   暱稱就能玩。註冊或登入後，可保存你的對局戰績。
                 </p>
               </aside>
+            </section>
+            <section className="public-rooms">
+              <div className="section-heading">
+                <div>
+                  <span className="eyebrow">PUBLIC TABLES</span>
+                  <h2>現在有人開桌</h2>
+                </div>
+                <span className="muted">即時更新</span>
+              </div>
+              {publicRoomList.length ? (
+                <div className="public-room-list">
+                  {publicRoomList.map((listed) => {
+                    const info = games.find((game) => game.id === listed.gameId);
+                    const canJoin =
+                      listed.status === "waiting" &&
+                      listed.playerCount < (info?.maxPlayers || 0);
+                    return (
+                      <article className="public-room-card panel" key={listed.id}>
+                        <div>
+                          <span className="eyebrow">{listed.status === "active" ? "IN PROGRESS" : "OPEN TABLE"}</span>
+                          <h3>{info?.name || listed.gameId}</h3>
+                          <p>
+                            {listed.playerCount} / {info?.maxPlayers || "–"} 位玩家 · {listed.spectatorCount} 位旁觀
+                          </p>
+                        </div>
+                        <div className="public-room-actions">
+                          {canJoin && (
+                            <button
+                              disabled={busy || !name.trim()}
+                              onClick={() => void run(() => join(listed.code))}
+                            >
+                              加入
+                            </button>
+                          )}
+                          <button
+                            className="outline"
+                            disabled={busy || !name.trim()}
+                            onClick={() => void run(() => watch(listed.code))}
+                          >
+                            旁觀
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="panel public-room-empty">
+                  <p>目前沒有公開房。你可以成為第一位開桌的人。</p>
+                  <button onClick={() => navigate("/games")}>建立房間 →</button>
+                </div>
+              )}
+              {!name.trim() && <small className="muted">先在上方填入暱稱，才能加入或旁觀。</small>}
             </section>
             {me.rooms.length > 0 && (
               <section className="resume">
@@ -570,6 +716,31 @@ function App() {
               <span>一點運氣，一點默契。剩下的，交給朋友。</span>
             </footer>
           </>
+        ) : watchCode && me.name === "旅人" ? (
+          <section className="empty-state panel spectator-name-gate">
+            <span className="eyebrow">SPECTATOR ENTRY</span>
+            <h1>先取一個旁觀暱稱</h1>
+            <p>房內會顯示在線旁觀者的暱稱與頭像。</p>
+            <input
+              autoComplete="nickname"
+              maxLength={24}
+              placeholder="你的暱稱"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
+            <button
+              disabled={busy || !name.trim()}
+              onClick={() =>
+                void run(async () => {
+                  await saveName();
+                  await refreshMe();
+                })
+              }
+            >
+              開始旁觀 →
+            </button>
+            <button className="text-button" onClick={() => navigate("/")}>返回大廳</button>
+          </section>
         ) : !room ? (
           <section className="empty-state">
             <h1>正在打開牌桌</h1>
@@ -580,7 +751,9 @@ function App() {
           <>
             <div className="room-heading">
               <div>
-                <span className="eyebrow">PRIVATE TABLE / {roomInfo?.name || room.gameId}</span>
+                <span className="eyebrow">
+                  {isSpectator ? "SPECTATOR" : room.isPublic ? "PUBLIC" : "PRIVATE"} TABLE / {roomInfo?.name || room.gameId}
+                </span>
                 <h1>
                   {room.status === "waiting"
                     ? "人到齊，就開場。"
@@ -593,25 +766,67 @@ function App() {
               </div>
               <div className="room-tools">
                 <span className="connection">{connection}</span>
+                {isHost && (
+                  <button
+                    className="outline small"
+                    disabled={busy || !!pending}
+                    onClick={() =>
+                      void action({
+                        type: "setVisibility",
+                        isPublic: !room.isPublic,
+                      })
+                    }
+                  >
+                    {room.isPublic ? "改為私人" : "公開到首頁"}
+                  </button>
+                )}
                 <button
                   className="outline small"
                   onClick={() =>
-                    void run(async () => {
-                      const link = `${location.origin}/?join=${room.code}`;
-                      try {
-                        await navigator.clipboard.writeText(link);
-                        setNotice("邀請連結已複製。");
-                      } catch {
-                        setNotice(`邀請朋友開啟 ${link}`);
-                      }
-                    })
+                    void run(() =>
+                      copyLink(
+                        `${location.origin}/?join=${room.code}`,
+                        "入座連結已複製。",
+                      ),
+                    )
                   }
                 >
-                  邀請朋友 · {room.code}
+                  邀請入座 · {room.code}
+                </button>
+                <button
+                  className="outline small"
+                  onClick={() =>
+                    void run(() =>
+                      copyLink(
+                        `${location.origin}/watch/${room.code}`,
+                        "旁觀連結已複製。",
+                      ),
+                    )
+                  }
+                >
+                  分享旁觀
                 </button>
               </div>
             </div>
-            {pending && !busy && (
+            <section className="panel spectator-presence">
+              <div>
+                <span className="eyebrow">WATCHING NOW</span>
+                <h2>{room.spectators.length} 位旁觀者</h2>
+              </div>
+              {room.spectators.length ? (
+                <div className="spectator-list">
+                  {room.spectators.map((spectator) => (
+                    <span key={spectator.id}>
+                      <PlayerAvatar name={spectator.name} src={spectator.avatarUrl} />
+                      {spectator.name}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted">目前還沒有人旁觀。</p>
+              )}
+            </section>
+            {pending && !busy && !isSpectator && (
               <div className="message" role="alert">
                 上次操作結果尚未確認。
                 <button onClick={() => void action(pending.action, true)}>
@@ -657,15 +872,29 @@ function App() {
                       ),
                     )}
                   </div>
-                  <button
-                    className={self?.ready ? "outline wide" : "wide"}
-                    disabled={busy || !!pending}
-                    onClick={() =>
-                      void action({ type: "ready", ready: !self?.ready })
-                    }
-                  >
-                    {self?.ready ? "取消準備" : "我準備好了"}
-                  </button>
+                  {isSpectator ? (
+                    room.members.length < (roomInfo?.maxPlayers || 0) ? (
+                      <button
+                        className="wide"
+                        disabled={busy}
+                        onClick={() => void run(() => join(room.code))}
+                      >
+                        加入這一桌 →
+                      </button>
+                    ) : (
+                      <p className="muted">座位已滿，可以繼續旁觀。</p>
+                    )
+                  ) : (
+                    <button
+                      className={self?.ready ? "outline wide" : "wide"}
+                      disabled={busy || !!pending}
+                      onClick={() =>
+                        void action({ type: "ready", ready: !self?.ready })
+                      }
+                    >
+                      {self?.ready ? "取消準備" : "我準備好了"}
+                    </button>
+                  )}
                 </div>
                 <aside className="panel start-panel">
                   <span className="eyebrow">BEFORE WE BEGIN</span>
@@ -698,6 +927,8 @@ function App() {
                       </button>
                       <small>至少 {roomInfo?.minPlayers || 2} 人，且每位玩家都已準備。</small>
                     </>
+                  ) : isSpectator ? (
+                    <p>你正在旁觀等待室；有空位時可從左側直接加入。</p>
                   ) : (
                     <p>準備好後，等待房主開始。</p>
                   )}
@@ -740,6 +971,8 @@ function App() {
                   >
                     回到準備大廳 →
                   </button>
+                ) : isSpectator ? (
+                  <p>你可以留在這裡看結算；房主返回等待室後會自動同步。</p>
                 ) : (
                   <p>等待房主帶大家回到準備大廳。</p>
                 )}
@@ -753,9 +986,9 @@ function App() {
                   void refreshMe().catch((e) => setError(e.message));
                 }}
               >
-                ← 返回大廳（保留座位）
+                ← 返回大廳{isSpectator ? "" : "（保留座位）"}
               </button>
-              {room.status !== "active" && (
+              {!isSpectator && room.status !== "active" && (
                 <button
                   className="text-button"
                   disabled={busy || !!pending}

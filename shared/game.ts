@@ -23,6 +23,7 @@ export interface GameDefinition<S = unknown, A = unknown, V = unknown> {
     random: (max: number) => number,
   ): S;
   playerView(state: S, player: string): V;
+  spectatorView(state: S): V;
   result(
     state: S,
   ): { scores: Record<string, number>; winners: string[] } | null;

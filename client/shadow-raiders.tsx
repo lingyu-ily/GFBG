@@ -8,7 +8,7 @@ export function ShadowRaidersTable({ room, me, busy, onAction }: {
   room: RoomView<SRView>; me: string; busy: boolean; onAction: (action: RoomAction) => void;
 }) {
   const game = room.game!;
-  const self = game.players.find((p) => p.id === me)!;
+  const self = game.players.find((p) => p.id === me);
   const current = game.players.find((p) => p.id === game.current);
   const pending = game.legal.pending;
   const outer = game.areas.filter((a) => !a.airship);
@@ -44,13 +44,22 @@ export function ShadowRaidersTable({ room, me, busy, onAction }: {
             <div className="shadow-equipment">{p.equipment.length ? p.equipment.map((e) => <span title={srCardById(e.card).text} key={e.id}>{srCardById(e.card).title}</span>) : <i>沒有裝備</i>}</div>
           </article>)}
         </div>
-        <section className="shadow-self">
+        {self ? <section className="shadow-self">
           <div className={`shadow-identity faction-${self.faction}`}><span className="eyebrow">YOUR SECRET IDENTITY</span><h2>{self.character?.name} <small>{self.character?.englishName}</small></h2><p><b>{faction(self.faction)}</b> · 最大生命 {self.maxHp}</p><p><strong>勝利：</strong>{self.character?.win}</p><p><strong>能力：</strong>{self.character?.ability}</p></div>
           <div className="shadow-actions">
             {game.phase === "finished" ? <div><span className="eyebrow">WINNERS</span><h2>{game.players.filter((p) => game.winners.includes(p.id)).map((p) => p.name).join("、")}</h2></div> : pending ? <><h3>{pending.text}</h3><div className="shadow-option-list">{pending.options.map((option) => <button disabled={busy} key={option.id} onClick={() => act(option.id === "roll" ? { type: "roll", promptId: pending.id } : { type: "choose", promptId: pending.id, optionId: option.id })}>{option.label}</button>)}</div></> : <p>等待其他玩家完成選擇。</p>}
             <div className="shadow-special-actions">{game.legal.canUseAbility && <button className="outline" disabled={busy} onClick={() => act({ type: "ability" })}>使用角色能力</button>}</div>
           </div>
-        </section>
+        </section> : (
+          <section className="shadow-self spectator-game-panel">
+            <div className="shadow-identity">
+              <span className="eyebrow">SPECTATOR VIEW</span>
+              <h2>正在旁觀飛行船戰局</h2>
+              <p>未公開身分、私人提示與玩家操作均已隱藏。</p>
+            </div>
+            {game.phase === "finished" && <div className="shadow-actions"><span className="eyebrow">WINNERS</span><h2>{game.players.filter((p) => game.winners.includes(p.id)).map((p) => p.name).join("、")}</h2></div>}
+          </section>
+        )}
       </section>
       <aside className="table-sidebar">
         <details className="panel role-reference" open><summary>飛船版規則<span>環狀射程、登船、推理</span></summary><div><p>外圍可攻擊所在地與逆時針左鄰；每張死亡瞄準鏡再延伸一格。飛船與所有地點互相在射程內。</p><p>擲出 10 強制登船；在飛船開始回合可直接選一個外圍地點。身分只能因能力、牌或死亡公開。</p></div></details>

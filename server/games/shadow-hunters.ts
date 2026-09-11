@@ -766,6 +766,9 @@ export const shadowHunters: GameDefinition<SHState, SHAction, SHView> = {
       legal: this.legalActions(s, id) as SHLegal,
     };
   },
+  spectatorView(s) {
+    return this.playerView(s, "");
+  },
   result(s) {
     return s.phase === "finished" ? { scores: Object.fromEntries(s.players.map((p) => [p.id, s.winners.includes(p.id) ? 1 : 0])), winners: s.winners } : null;
   },

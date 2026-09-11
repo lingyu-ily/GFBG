@@ -4,7 +4,12 @@ import { pool, transaction } from "./db.js";
 import { getGame } from "./games/registry.js";
 import { requireCondition } from "./errors.js";
 import type { Identity } from "./auth.js";
-import type { RoomCommand, RoomView } from "../shared/room.js";
+import type {
+  PublicRoomSummary,
+  RoomCommand,
+  RoomView,
+  Spectator,
+} from "../shared/room.js";
 import { publicAvatarUrl } from "./avatars.js";
 interface Room {
   id: string;
@@ -12,6 +17,7 @@ interface Room {
   game_id: string;
   host_id: string;
   status: RoomView["status"];
+  is_public: boolean;
   version: number;
   state: any;
 }
@@ -20,7 +26,11 @@ const code = () =>
   Array.from({ length: 8 }, () => alphabet[randomInt(alphabet.length)]).join(
     "",
   );
-export async function createRoom(who: Identity, gameId: string) {
+export async function createRoom(
+  who: Identity,
+  gameId: string,
+  isPublic = false,
+) {
   getGame(gameId);
   return transaction(async (db) => {
     await db.query("SELECT id FROM players WHERE id=$1 FOR UPDATE", [
@@ -37,8 +47,8 @@ export async function createRoom(who: Identity, gameId: string) {
     );
     const id = randomUUID();
     await db.query(
-      "INSERT INTO rooms(id,code,game_id,host_id) VALUES($1,$2,$3,$4)",
-      [id, code(), gameId, who.player_id],
+      "INSERT INTO rooms(id,code,game_id,host_id,is_public) VALUES($1,$2,$3,$4,$5)",
+      [id, code(), gameId, who.player_id, isPublic],
     );
     await db.query(
       "INSERT INTO members(room_id,player_id,position) VALUES($1,$2,0)",
@@ -100,6 +110,8 @@ async function viewWith(
   db: Pick<pg.PoolClient, "query">,
   id: string,
   who: string,
+  viewerRole: RoomView["viewerRole"],
+  spectatorIds: string[],
 ): Promise<RoomView> {
   const {
     rows: [room],
@@ -109,30 +121,93 @@ async function viewWith(
     "SELECT p.id,coalesce(u.display_name,p.name) AS name,m.ready,m.position,(m.last_seen>now()-interval '45 seconds') AS online,u.avatar_key FROM members m JOIN players p ON p.id=m.player_id LEFT JOIN users u ON u.id=p.user_id AND NOT u.legacy WHERE m.room_id=$1 ORDER BY m.position",
     [id],
   );
-  requireCondition(
-    members.rows.some((m) => m.id === who),
-    403,
-    "你不在這個房間。",
-  );
+  if (viewerRole === "player")
+    requireCondition(
+      members.rows.some((m) => m.id === who),
+      403,
+      "你不在這個房間。",
+    );
+  else
+    requireCondition(room.status !== "aborted", 410, "這個房間已經終止。");
+  let spectators: Spectator[] = [];
+  if (spectatorIds.length) {
+    const rows = await db.query(
+      "SELECT p.id,coalesce(u.display_name,p.name) AS name,u.avatar_key FROM players p LEFT JOIN users u ON u.id=p.user_id AND NOT u.legacy WHERE p.id=ANY($1::uuid[]) ORDER BY coalesce(u.display_name,p.name),p.id",
+      [spectatorIds],
+    );
+    spectators = rows.rows.map(({ avatar_key, ...spectator }) => ({
+      ...spectator,
+      avatarUrl: publicAvatarUrl(avatar_key),
+    }));
+  }
   return {
     id,
     code: room.code,
     gameId: room.game_id,
     hostId: room.host_id,
     status: room.status,
+    isPublic: room.is_public,
+    viewerRole,
     version: room.version,
     members: members.rows.map(({ avatar_key, ...member }) => ({
       ...member,
       avatarUrl: publicAvatarUrl(avatar_key),
     })),
-    game: room.state ? getGame(room.game_id).playerView(room.state, who) : null,
+    spectators,
+    game: room.state
+      ? viewerRole === "player"
+        ? getGame(room.game_id).playerView(room.state, who)
+        : getGame(room.game_id).spectatorView(room.state)
+      : null,
   };
 }
-export async function roomView(id: string, who: string) {
+export async function roomView(
+  id: string,
+  who: string,
+  spectatorIds: string[] = [],
+) {
   return transaction(async (db) => {
     await db.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-    return viewWith(db, id, who);
+    return viewWith(db, id, who, "player", spectatorIds);
   });
+}
+export async function watchRoom(
+  roomCode: string,
+  who: string,
+  spectatorIds: string[] | ((roomId: string) => string[]) = [],
+) {
+  return transaction(async (db) => {
+    await db.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    const room = await db.query<{ id: string }>(
+      "SELECT id FROM rooms WHERE code=$1",
+      [roomCode],
+    );
+    requireCondition(room.rows[0], 404, "找不到這個房間，請確認代碼。");
+    const ids =
+      typeof spectatorIds === "function"
+        ? spectatorIds(room.rows[0].id)
+        : spectatorIds;
+    return viewWith(db, room.rows[0].id, who, "spectator", ids);
+  });
+}
+export async function publicRooms(
+  spectatorCounts: ReadonlyMap<string, number>,
+): Promise<PublicRoomSummary[]> {
+  const rooms = await pool.query(
+    "SELECT r.id,r.code,r.game_id,r.status,r.updated_at,count(m.player_id)::int AS player_count FROM rooms r JOIN members m ON m.room_id=r.id WHERE r.is_public AND r.status IN ('waiting','active') GROUP BY r.id ORDER BY r.updated_at DESC LIMIT 50",
+  );
+  return rooms.rows.map((room) => ({
+    id: room.id,
+    code: room.code,
+    gameId: room.game_id,
+    status: room.status,
+    playerCount: room.player_count,
+    spectatorCount: spectatorCounts.get(room.id) || 0,
+    updatedAt:
+      room.updated_at instanceof Date
+        ? room.updated_at.toISOString()
+        : String(room.updated_at),
+  }));
 }
 export async function applyRoomAction(
   id: string,
@@ -176,7 +251,11 @@ export async function applyRoomAction(
       "牌桌已更新，請依最新狀態重新操作。",
     );
     const game = getGame(room.game_id);
-    if (action.type === "ready") {
+    if (action.type === "setVisibility") {
+      requireCondition(room.host_id === who.player_id, 403, "只有房主能切換公開狀態。");
+      requireCondition(room.status !== "aborted", 409, "房間已經終止。");
+      room.is_public = action.isPublic;
+    } else if (action.type === "ready") {
       requireCondition(room.status === "waiting", 409, "對局已開始。");
       await db.query(
         "UPDATE members SET ready=$1 WHERE room_id=$2 AND player_id=$3",
@@ -295,8 +374,8 @@ export async function applyRoomAction(
       }
     }
     await db.query(
-      "UPDATE rooms SET state=$1,status=$2,host_id=$3,version=version+1,updated_at=now() WHERE id=$4",
-      [room.state, room.status, room.host_id, id],
+      "UPDATE rooms SET state=$1,status=$2,host_id=$3,is_public=$4,version=version+1,updated_at=now() WHERE id=$5",
+      [room.state, room.status, room.host_id, room.is_public, id],
     );
     await db.query(
       "INSERT INTO operations(room_id,operation_id,player_id,version) VALUES($1,$2,$3,$4)",

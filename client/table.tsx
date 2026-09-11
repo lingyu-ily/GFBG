@@ -51,7 +51,7 @@ export function LoveLetterTable({
   onAction: (action: RoomAction) => void;
 }) {
   const g = room.game!;
-  const self = g.players.find((p) => p.id === me)!;
+  const self = g.players.find((p) => p.id === me);
   const [selected, select] = useState("");
   const [target, setTarget] = useState("");
   const [guess, setGuess] = useState("");
@@ -63,7 +63,7 @@ export function LoveLetterTable({
     setBottom([]);
   }, [room.version]);
   const legal = g.legal.cards.find((c) => c.id === selected);
-  const card = self.hand?.find((c) => c.id === selected);
+  const card = self?.hand?.find((c) => c.id === selected);
   const current = g.players.find((p) => p.id === g.current);
   const end = g.phase === "roundEnd" || g.phase === "matchEnd";
   const choose = (c: Card) => {
@@ -71,7 +71,7 @@ export function LoveLetterTable({
     const l = g.legal.cards.find((x) => x.id === c.id);
     setTarget(l?.targets.length === 1 ? l.targets[0] : "");
     setGuess("");
-    setBottom((self.hand || []).filter((x) => x.id !== c.id).map((x) => x.id));
+    setBottom((self?.hand || []).filter((x) => x.id !== c.id).map((x) => x.id));
   };
   return (
     <div className="game-layout">
@@ -84,7 +84,7 @@ export function LoveLetterTable({
             目標 <strong>{g.targetScore}</strong> 枚好感
           </span>
           <span className="pill">
-            {end ? "本輪結束" : self.alive ? "進行中" : "本輪出局"}
+            {end ? "本輪結束" : !self ? "旁觀中" : self.alive ? "進行中" : "本輪出局"}
           </span>
         </div>
         <div className="opponents">
@@ -213,7 +213,7 @@ export function LoveLetterTable({
             ))}
           </div>
         )}
-        <section className="hand-panel">
+        {self ? <section className="hand-panel">
           <div className="hand-heading">
             <div>
               <span className="eyebrow">YOUR HAND · 只有你看得到</span>
@@ -393,7 +393,17 @@ export function LoveLetterTable({
               </span>
             ))}
           </div>
-        </section>
+        </section> : (
+          <section className="hand-panel spectator-hand-panel">
+            <div className="hand-heading">
+              <div>
+                <span className="eyebrow">SPECTATOR VIEW</span>
+                <h3>正在旁觀這場對局</h3>
+              </div>
+            </div>
+            <p className="muted">手牌、私人提示與只有玩家能採取的操作不會顯示。</p>
+          </section>
+        )}
       </section>
       <aside className="table-sidebar">
         <details className="panel role-reference">

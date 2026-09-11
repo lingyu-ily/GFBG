@@ -12,7 +12,7 @@ export function ShadowHuntersTable({ room, me, busy, onAction }: {
   onAction: (action: RoomAction) => void;
 }) {
   const game = room.game!;
-  const self = game.players.find((p) => p.id === me)!;
+  const self = game.players.find((p) => p.id === me);
   const current = game.players.find((p) => p.id === game.current);
   const pending = game.legal.pending;
   const act = (action: unknown) => onAction({ type: "game", action });
@@ -71,7 +71,7 @@ export function ShadowHuntersTable({ room, me, busy, onAction }: {
             </article>
           ))}
         </div>
-        <section className="shadow-self">
+        {self ? <section className="shadow-self">
           <div className={`shadow-identity faction-${self.faction}`}>
             <span className="eyebrow">YOUR SECRET IDENTITY</span>
             <h2>{self.character?.name} <small>{self.character?.englishName}</small></h2>
@@ -101,7 +101,21 @@ export function ShadowHuntersTable({ room, me, busy, onAction }: {
               {game.legal.canUseAbility && <button className="outline" disabled={busy} onClick={() => act({ type: "ability" })}>使用角色能力</button>}
             </div>
           </div>
-        </section>
+        </section> : (
+          <section className="shadow-self spectator-game-panel">
+            <div className="shadow-identity">
+              <span className="eyebrow">SPECTATOR VIEW</span>
+              <h2>正在旁觀獵殺現場</h2>
+              <p>未公開身分、私人提示與玩家操作均已隱藏。</p>
+            </div>
+            {game.phase === "finished" && (
+              <div className="shadow-actions">
+                <span className="eyebrow">WINNERS</span>
+                <h2>{game.players.filter((p) => game.winners.includes(p.id)).map((p) => p.name).join("、")}</h2>
+              </div>
+            )}
+          </section>
+        )}
       </section>
       <aside className="table-sidebar">
         <details className="panel role-reference" open>

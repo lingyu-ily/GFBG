@@ -263,6 +263,15 @@ class Browser {
     });
   }
 }
+async function wsFrame(ws: WebSocket) {
+  const frame = await Promise.race([
+    once(ws, "message"),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("websocket timeout")), 5000).unref(),
+    ),
+  ]);
+  return JSON.parse(String(frame[0]));
+}
 async function table(n: number, gameId = "love-letter") {
   const players: Browser[] = [];
   for (let i = 0; i < n; i++)
@@ -365,13 +374,13 @@ async function login(
 test("Migrations are repeatable; HTTP shell, CSRF and anonymous history permissions", async () => {
   assert.equal(
     (await sql.query("SELECT count(*) FROM schema_migrations")).rows[0].count,
-    "4",
+    "5",
   );
   await stopApp();
   await startApp();
   assert.equal(
     (await sql.query("SELECT count(*) FROM schema_migrations")).rows[0].count,
-    "4",
+    "5",
   );
   const legacy = (
     await sql.query("SELECT legacy,email,login_id FROM users WHERE id=$1", [legacyUserId])
@@ -517,6 +526,122 @@ test("Member avatars use RustFS-compatible storage, update rooms and safely fall
   assert.equal((await member.ok("/me")).avatarUrl, null);
   assert.equal(objects.has(replacementPath), false);
 });
+test("Public rooms are discoverable in real time and private rooms remain watchable by code", async () => {
+  const host = await new Browser().boot("公開房主");
+  const watcher = await new Browser().boot("旁觀者");
+  const anonymous = new Browser();
+  anonymous.me = await anonymous.ok("/me");
+  const { id } = await host.ok("/rooms", {
+    gameId: "love-letter",
+    isPublic: true,
+  });
+  const created = await host.view(id);
+  assert.equal(created.isPublic, true);
+  assert.equal(created.viewerRole, "player");
+  const listed = await watcher.ok("/rooms/public");
+  assert.ok(listed.rooms.some((room: any) => room.id === id));
+  assert.equal(
+    (await anonymous.request(`/rooms/watch/${created.code}`)).status,
+    403,
+  );
+
+  const lobby = new WebSocket(url.replace("http:", "ws:") + "/ws?lobby=1", {
+    headers: { Cookie: watcher.cookie, Origin: url },
+  });
+  lobby.on("error", () => {});
+  assert.ok((await wsFrame(lobby)).rooms.some((room: any) => room.id === id));
+
+  const spectator = new WebSocket(
+    url.replace("http:", "ws:") +
+      `/ws?mode=spectator&code=${created.code}`,
+    { headers: { Cookie: watcher.cookie, Origin: url } },
+  );
+  spectator.on("error", () => {});
+  const spectatorFrame = await wsFrame(spectator);
+  assert.equal(spectatorFrame.room.viewerRole, "spectator");
+  assert.ok(spectatorFrame.room.spectators.some((item: any) => item.name === "旁觀者"));
+
+  const duplicate = new WebSocket(
+    url.replace("http:", "ws:") +
+      `/ws?mode=spectator&code=${created.code}`,
+    { headers: { Cookie: watcher.cookie, Origin: url } },
+  );
+  duplicate.on("error", () => {});
+  await wsFrame(duplicate);
+  assert.equal((await host.view(id)).spectators.length, 1);
+
+  const lobbyUpdate = (async () => {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const frame = await wsFrame(lobby);
+      if (!frame.rooms.some((room: any) => room.id === id)) return frame;
+    }
+    throw new Error("public room did not disappear from lobby");
+  })();
+  await host.command(id, { type: "setVisibility", isPublic: false });
+  await lobbyUpdate;
+  assert.equal((await watcher.ok(`/rooms/watch/${created.code}`)).isPublic, false);
+
+  const spectatorClosed = once(spectator, "close");
+  const duplicateClosed = once(duplicate, "close");
+  spectator.close();
+  duplicate.close();
+  await Promise.all([spectatorClosed, duplicateClosed]);
+  await watcher.ok("/rooms/join", { code: created.code });
+  watcher.me = await watcher.ok("/me");
+  assert.equal((await host.view(id)).members.length, 2);
+  const latest = await watcher.view(id);
+  assert.equal(
+    (
+      await watcher.request(`/rooms/${id}/actions`, {
+        operationId: randomUUID(),
+        version: latest.version,
+        action: { type: "setVisibility", isPublic: true },
+      })
+    ).status,
+    403,
+  );
+  lobby.close();
+});
+
+test("Spectator views for every game hide private state and never take a seat", async () => {
+  await sql.query("DELETE FROM rate_limits");
+  const watcher = await new Browser().boot("安全旁觀者");
+  for (const [gameId, players] of [
+    ["love-letter", 2],
+    ["shadow-hunters", 4],
+    ["shadow-raiders-airship", 4],
+  ] as const) {
+    const t = await table(players, gameId);
+    await start(t);
+    const playerRoom = await t.players[0].view(t.id);
+    const before = (
+      await sql.query("SELECT count(*)::int AS count FROM members WHERE room_id=$1", [
+        t.id,
+      ])
+    ).rows[0].count;
+    const view = await watcher.ok(`/rooms/watch/${playerRoom.code}`);
+    assert.equal(view.viewerRole, "spectator");
+    assert.equal(view.members.length, before);
+    if (gameId === "love-letter") {
+      assert.ok(view.game.players.every((player: any) => player.hand === undefined));
+      assert.deepEqual(view.game.legal, { cards: [], chancellor: false });
+    } else {
+      assert.ok(view.game.players.every((player: any) => player.character === undefined));
+      assert.equal(view.game.legal.pending, undefined);
+      assert.ok(Object.values(view.game.legal).every((value) => value === false));
+    }
+    assert.equal(
+      (
+        await sql.query("SELECT count(*)::int AS count FROM members WHERE room_id=$1", [
+          t.id,
+        ])
+      ).rows[0].count,
+      before,
+    );
+  }
+  await sql.query("DELETE FROM rate_limits");
+});
+
 test("Rooms require membership; race joins cap at six; start requires ready; seats lock on start", async () => {
   const t = await table(2);
   const stranger = await new Browser().boot("外人");
