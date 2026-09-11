@@ -19,12 +19,15 @@
 | 類別 | 介面 |
 | --- | --- |
 | 啟動 | `GET /api/health`、`GET /api/me`、`GET /api/games` |
-| 身份 | `POST /api/profile`、`POST/DELETE /api/profile/avatar`、`POST /api/auth/request`、`POST /api/auth/confirm`、`POST /api/auth/logout` |
+| 身份 | `POST /api/auth/register`、`POST /api/auth/login`、`POST /api/auth/logout`、Email 驗證與密碼重設端點 |
+| 帳號 | `POST /api/profile`、`POST/DELETE /api/profile/avatar`、`POST /api/auth/change-password` |
 | 房間 | `POST /api/rooms`、`POST /api/rooms/join`、`GET /api/rooms/:id`、`POST /api/rooms/:id/actions` |
 | 戰績 | `GET /api/history`，只回傳當前帳號的最多 100 場最近對局，總數與勝率計入全部戰績 |
 | 同步 | `GET /ws?room=UUID` Upgrade；session Cookie 和 Origin 驗證後只訂閱本人視角 |
 
-所有 POST 需要 `Origin === PUBLIC_URL origin` 及 `X-CSRF-Token`。`/api/me` 回傳目前 session 的 CSRF token。不要把 session cookie 或 Email 登入 token 放入 query string。
+所有 POST 需要 `Origin === PUBLIC_URL origin` 及 `X-CSRF-Token`。`/api/me` 回傳目前 session 的 CSRF token。不要把 session cookie、Email 驗證 token 或密碼重設 token 放入 query string；信件連結使用 URL fragment，GET 不消耗 token。
+
+會員以唯一且不可修改的登入帳號及 Argon2id 密碼摘要驗證。Email 不是登入識別，只保存驗證時間並用於忘記密碼。註冊立即啟用；寄信失敗時帳號保持未驗證且可正常遊玩。Email 驗證 token 有效 24 小時，密碼重設 token 有效 30 分鐘，兩者皆單次使用。重設密碼撤銷全部 session；帳號設定改密碼則撤銷其他裝置並旋轉目前 session。
 
 會員頭像上傳使用原始 JPEG、PNG 或 WebP body，經後端限制大小、解碼、置中裁切及轉成 256×256 WebP 後，才以 UUID key 寫入 RustFS。RustFS Bucket 對外只公開 `avatars/*` 的讀取；寫入憑證只存在伺服器環境。換圖先寫新物件、再切換資料庫 key，最後刪除舊物件，避免失敗時留下失效頭像。
 
@@ -49,12 +52,12 @@ WebSocket 消息為 `{type:"room",room:RoomView}` 或 `{type:"error",error:strin
 3. 同交易保存 state、version、operation；若完局，同時寫入 match 和 results（唯一約束避免重複）。
 4. COMMIT 成功後回應與廣播。資料庫錯誤不回傳成功；若成功回應在網路中遺失，客戶端使用同一 operation ID 重試。
 
-登入歸屬會鎖住該玩家進行中的房間，與結算序列化。先結算再登入不回補；先登入再結算會保存帳號。戰績的 user_id 在結算時固定，不透過動態 JOIN 讓日後登入追溯訪客戰績。
+登入或註冊歸屬會鎖住該玩家進行中的房間，與結算序列化。先結算再登入不回補；先登入再結算會保存帳號。戰績的 user_id 在結算時固定，不透過動態 JOIN 讓日後登入追溯訪客戰績。會員顯示名稱由 `users.display_name` 管理；等待室立即顯示新名稱，開局時複製到玩家列與遊戲快照，因此進行中的對局與戰績保留開局名稱。
 
 ## 部署與擴展限制
 
 目前只支援一個應用程式實例。即使資料庫鎖能防止並行寫入，跨實例廣播仍需額外訊息層，不能直接增加 replicas。沒有 Redis 依賴，也沒有在 Node.js 記憶體中保存權威牌庫。
 
-Cookie session 到期 30 天；Email token 到期 15 分鐘。訪客 session 過期或被清除就無法只靠暱稱恢復。對局不設自動代打或逾時敗局。
+Cookie session 到期 30 天。訪客 session 過期或被清除就無法只靠暱稱恢復。對局不設自動代打或逾時敗局。遷移至帳密登入時，既有 Email magic-link 帳號標記為 legacy 並撤銷 session；資料保留但不能登入，也不會與重新註冊的帳號合併。
 
 升級規則時不得直接讓既有 JSONB 快照改套不相容新規則。保留舊版本解碼器／規則，或等進行中對局結束才切換。第一版沒有管理後台、對局永久清理排程與多機協調。

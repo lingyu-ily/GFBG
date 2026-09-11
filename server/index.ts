@@ -14,9 +14,15 @@ import { AppError, requireCondition } from "./errors.js";
 import {
   identity,
   ensureIdentity,
-  requestLogin,
-  confirmLogin,
+  registerAccount,
+  loginAccount,
+  verifyEmail,
+  resendVerification,
+  requestPasswordReset,
+  resetPassword,
+  changePassword,
   logout,
+  mailEnabled,
   rateLimit,
   type Identity,
 } from "./auth.js";
@@ -76,12 +82,15 @@ app.get("/api/me", async (req, res) => {
   res.json({
     id: who.player_id,
     name: who.name,
+    isMember: !!who.user_id,
+    loginId: who.login_id,
     email: who.email,
+    emailVerified: who.email_verified,
     avatarUrl: publicAvatarUrl(who.avatar_key),
     avatarEnabled: !!config.avatar,
     csrf: who.csrf,
     rooms: rooms.rows,
-    emailEnabled: !!(config.smtp.host && config.smtp.from),
+    mailEnabled: mailEnabled(),
   });
 });
 app.get("/api/games", (_req, res) =>
@@ -109,12 +118,39 @@ const nickname = z
   .min(1)
   .max(24)
   .regex(/^[^\p{Cc}\p{Cf}]+$/u, "暱稱不可包含控制字元");
+const loginId = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^[a-z][a-z0-9_]{2,23}$/);
+const emailAddress = z
+  .email()
+  .max(254)
+  .transform((value) => value.trim().toLowerCase());
+const password = z.string().refine((value) => {
+  const length = Array.from(value).length;
+  return length >= 8 && length <= 128;
+}, "密碼必須為 8–128 個字元");
+const authToken = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 app.post("/api/profile", async (req, res) => {
   const { name } = z.object({ name: nickname }).parse(req.body);
-  await pool.query("UPDATE players SET name=$1 WHERE id=$2", [
-    name,
-    res.locals.who.player_id,
-  ]);
+  const who: Identity = res.locals.who;
+  if (who.user_id) {
+    await pool.query("UPDATE users SET display_name=$1 WHERE id=$2 AND NOT legacy", [
+      name,
+      who.user_id,
+    ]);
+    const rooms = await pool.query(
+      "SELECT DISTINCT m.room_id FROM members m JOIN players p ON p.id=m.player_id JOIN rooms r ON r.id=m.room_id WHERE p.user_id=$1 AND r.status IN ('waiting','active')",
+      [who.user_id],
+    );
+    void Promise.allSettled(rooms.rows.map((room) => broadcast(room.room_id)));
+  } else {
+    await pool.query("UPDATE players SET name=$1 WHERE id=$2", [
+      name,
+      who.player_id,
+    ]);
+  }
   res.json({ ok: true });
 });
 const avatarBody = express.raw({
@@ -148,25 +184,70 @@ app.delete("/api/profile/avatar", async (_req, res) => {
   res.json({ ok: true, avatarUrl: null });
   void Promise.allSettled(roomIds.map(broadcast));
 });
-app.post("/api/auth/request", async (req, res) => {
-  const { email } = z
+app.post("/api/auth/register", async (req, res) => {
+  const values = z
     .object({
-      email: z
-        .email()
-        .max(254)
-        .transform((s) => s.toLowerCase()),
+      loginId,
+      displayName: nickname,
+      email: emailAddress,
+      password,
     })
     .parse(req.body);
-  await requestLogin(email, res.locals.who, req.ip || "unknown");
+  const who: Identity = res.locals.who;
+  const verificationSent = await registerAccount(
+    values,
+    who,
+    req.ip || "unknown",
+    res,
+  );
+  closeSession(who.token_hash);
+  res.json({ ok: true, verificationSent });
+});
+app.post("/api/auth/login", async (req, res) => {
+  const values = z.object({ loginId, password }).parse(req.body);
+  const who: Identity = res.locals.who;
+  await loginAccount(
+    values.loginId,
+    values.password,
+    who,
+    req.ip || "unknown",
+    res,
+  );
+  closeSession(who.token_hash);
   res.json({ ok: true });
 });
-app.post("/api/auth/confirm", async (req, res) => {
-  const { token } = z
-    .object({ token: z.string().regex(/^[A-Za-z0-9_-]{43}$/) })
+app.post("/api/auth/verify-email", async (req, res) => {
+  const { token } = z.object({ token: authToken }).parse(req.body);
+  await verifyEmail(token);
+  res.json({ ok: true });
+});
+app.post("/api/auth/resend-verification", async (req, res) => {
+  const verificationSent = await resendVerification(
+    res.locals.who,
+    req.ip || "unknown",
+  );
+  res.json({ ok: true, verificationSent });
+});
+app.post("/api/auth/forgot-password", async (req, res) => {
+  const { email } = z.object({ email: emailAddress }).parse(req.body);
+  await requestPasswordReset(email, req.ip || "unknown");
+  res.json({ ok: true });
+});
+app.post("/api/auth/reset-password", async (req, res) => {
+  const { token, newPassword } = z
+    .object({ token: authToken, newPassword: password })
+    .parse(req.body);
+  const userId = await resetPassword(token, newPassword);
+  closeUserSessions(userId);
+  res.json({ ok: true });
+});
+app.post("/api/auth/change-password", async (req, res) => {
+  const { currentPassword, newPassword } = z
+    .object({ currentPassword: z.string(), newPassword: password })
     .parse(req.body);
   const who: Identity = res.locals.who;
-  await confirmLogin(token, who, res);
-  closeSession(who.token_hash);
+  await changePassword(who, currentPassword, newPassword, res);
+  closeUserSessions(who.user_id!);
   res.json({ ok: true });
 });
 app.post("/api/auth/logout", async (_req, res) => {
@@ -252,7 +333,7 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof z.ZodError) {
     res
       .status(400)
-      .json({ error: "輸入格式不正確，請檢查暱稱、代碼或操作內容。" });
+      .json({ error: "輸入格式不正確，請檢查帳號、名稱、Email、密碼或操作內容。" });
     return;
   }
   if (err instanceof AppError) {
@@ -265,12 +346,6 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   }
   if ((err as { type?: string })?.type === "entity.too.large") {
     res.status(413).json({ error: "圖片不可超過 5 MiB。" });
-    return;
-  }
-  if (err instanceof Error && err.message === "SMTP_SEND_FAILED") {
-    res
-      .status(503)
-      .json({ error: "驗證信寄送失敗，請稍後重試；你仍可用訪客遊玩。" });
     return;
   }
   // Never log SQL parameters, state, email tokens or credentials.
@@ -292,6 +367,10 @@ const peers = new Set<Peer>();
 function closeSession(token: string) {
   for (const p of peers)
     if (p.who.token_hash === token) p.ws.close(4001, "session changed");
+}
+function closeUserSessions(userId: string) {
+  for (const p of peers)
+    if (p.who.user_id === userId) p.ws.close(4001, "account session changed");
 }
 async function sendView(p: Peer) {
   try {
@@ -390,7 +469,7 @@ const cleanup = setInterval(() => {
     .then(() => pool.query("DELETE FROM sessions WHERE expires_at<now()"))
     .then(() =>
       pool.query(
-        "DELETE FROM login_tokens WHERE expires_at<now()-interval '1 day'",
+        "DELETE FROM account_tokens WHERE expires_at<now()-interval '1 day'",
       ),
     )
     .catch(() => {});

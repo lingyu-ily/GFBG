@@ -1189,6 +1189,29 @@ dialog::backdrop {
 .dialog-inner .wide {
   margin-top: 20px;
 }
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 0 0 20px;
+}
+.auth-tabs button {
+  margin: 0;
+}
+.auth-tabs .active {
+  background: var(--accent);
+  color: #101923;
+}
+.account-section {
+  padding: 18px 0;
+  border-top: 1px solid var(--line);
+}
+.account-section button {
+  margin-top: 12px;
+}
+.verified {
+  color: #85c99a;
+}
 .avatar-profile {
   display: flex;
   align-items: center;

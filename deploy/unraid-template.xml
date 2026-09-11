@@ -7,7 +7,7 @@
   <Privileged>false</Privileged>
   <Support/>
   <Project/>
-  <Overview>古楓桌遊 GFBG：新版情書 2–6 人、私人房間、Email 登入與 RustFS 會員頭像。先依 GitHub Actions 部署指南登入 GHCR、拉取映像並執行遷移。連接既有 PostgreSQL、SMTP 與選用的 RustFS。</Overview>
+  <Overview>古楓桌遊 GFBG：新版情書 2–6 人、私人房間、帳密會員與 RustFS 會員頭像。Email 僅用於信箱驗證與密碼重設。先依 GitHub Actions 部署指南登入 GHCR、拉取映像並執行遷移。連接既有 PostgreSQL、SMTP 與選用的 RustFS。</Overview>
   <Category>GameServers:</Category>
   <WebUI>https://games.example.com</WebUI>
   <ExtraParams>--init --read-only --tmpfs /tmp:size=16m,mode=1777 --security-opt no-new-privileges:true --cap-drop ALL</ExtraParams>

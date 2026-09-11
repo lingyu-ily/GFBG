@@ -10,9 +10,12 @@ import "./style.css";
 interface Me {
   id: string;
   name: string;
+  isMember: boolean;
+  loginId: string | null;
   email: string | null;
+  emailVerified: boolean;
   csrf: string;
-  emailEnabled: boolean;
+  mailEnabled: boolean;
   avatarEnabled: boolean;
   avatarUrl: string | null;
   rooms: { id: string; code: string; game_id: string; status: string }[];
@@ -31,7 +34,14 @@ function App() {
     new URLSearchParams(location.search).get("join") || "",
   );
   const [panel, setPanel] = useState<"login" | "history" | null>(null);
+  const [authMode, setAuthMode] = useState<"login" | "register" | "forgot">("login");
+  const [loginId, setLoginId] = useState("");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newPasswordConfirm, setNewPasswordConfirm] = useState("");
   const [avatarFile, setAvatarFile] = useState<File>();
   const [history, setHistory] = useState<any>();
   const [first, setFirst] = useState("");
@@ -101,7 +111,8 @@ function App() {
     return () => removeEventListener("popstate", pop);
   }, []);
   useEffect(() => {
-    if (token) window.history.replaceState({}, "", "/auth/confirm");
+    if (token && path.startsWith("/auth/"))
+      window.history.replaceState({}, "", path);
   }, [token]);
   useEffect(() => {
     if (panel && !dialog.current?.open) dialog.current?.showModal();
@@ -176,6 +187,7 @@ function App() {
   }, [room, first]);
   async function saveName() {
     if (!me) return;
+    if (me.isMember) return;
     if (!name.trim()) throw new Error("先取一個暱稱，讓朋友認出你。");
     await api("/profile", { name: name.trim() }, me.csrf);
   }
@@ -232,7 +244,7 @@ function App() {
         </button>
         <nav>
           <span className="nav-note">把朋友，聚在一桌。</span>
-          {me?.email ? (
+          {me?.isMember ? (
             <>
               <button
                 className="text-button"
@@ -254,8 +266,14 @@ function App() {
               </button>
             </>
           ) : (
-            <button className="outline small" onClick={() => setPanel("login")}>
-              Email 登入 <span aria-hidden="true">↗</span>
+            <button
+              className="outline small"
+              onClick={() => {
+                setAuthMode("login");
+                setPanel("login");
+              }}
+            >
+              登入／註冊 <span aria-hidden="true">↗</span>
             </button>
           )}
         </nav>
@@ -294,29 +312,54 @@ function App() {
               重新連線
             </button>
           </section>
-        ) : path === "/auth/confirm" ? (
+        ) : path === "/auth/verify-email" ? (
           <section className="auth-confirm panel">
             <span className="eyebrow">ONE LAST STEP</span>
-            <h1>
-              確認是你，
-              <br />
-              就能留住每場回憶。
-            </h1>
-            <p>按下確認才會使用登入連結。請使用原本要求登入的瀏覽器。</p>
+            <h1>驗證你的 Email</h1>
+            <p>驗證只確認信箱屬於你，不會讓這個瀏覽器登入。</p>
             <button
               disabled={busy || !token}
               onClick={() =>
                 void run(async () => {
-                  await api("/auth/confirm", { token }, me.csrf);
+                  await api("/auth/verify-email", { token }, me.csrf);
                   await refreshMe();
                   navigate("/");
-                  setNotice("登入成功，進行中的座位已保留。");
+                  setNotice("Email 驗證完成。");
                 })
               }
             >
-              確認登入
+              驗證 Email
             </button>
-            {!token && <p>連結已移除或遺失，請重新索取驗證信。</p>}
+            {!token && <p>連結已移除或遺失，請登入後重新寄送驗證信。</p>}
+          </section>
+        ) : path === "/auth/reset-password" ? (
+          <section className="auth-confirm panel">
+            <span className="eyebrow">RESET PASSWORD</span>
+            <h1>設定新密碼</h1>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void run(async () => {
+                  if (newPassword !== newPasswordConfirm)
+                    throw new Error("兩次輸入的密碼不一致。");
+                  await api("/auth/reset-password", { token, newPassword }, me.csrf);
+                  setNewPassword("");
+                  setNewPasswordConfirm("");
+                  await refreshMe();
+                  navigate("/");
+                  setAuthMode("login");
+                  setPanel("login");
+                  setNotice("密碼已重設，請使用新密碼登入。");
+                });
+              }}
+            >
+              <label htmlFor="reset-password">新密碼</label>
+              <input id="reset-password" type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+              <label htmlFor="reset-password-confirm">再次輸入新密碼</label>
+              <input id="reset-password-confirm" type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={newPasswordConfirm} onChange={(event) => setNewPasswordConfirm(event.target.value)} />
+              <button className="wide" disabled={busy || !token}>儲存新密碼</button>
+            </form>
+            {!token && <p>連結已移除或遺失，請重新申請重設密碼。</p>}
           </section>
         ) : path === "/games" ? (
           <>
@@ -332,10 +375,10 @@ function App() {
               <div>
                 <span className="eyebrow">YOUR NAME AT THE TABLE</span>
                 <h2>先讓朋友認出你</h2>
-                <p>暱稱就能開玩；登入後還能保存對局戰績。</p>
+                <p>{me.isMember ? "會員名稱由帳號設定管理。" : "暱稱就能開玩；註冊後還能保存對局戰績。"}</p>
               </div>
               <div className="games-profile-field">
-                <label htmlFor="games-nickname">你的暱稱</label>
+                <label htmlFor="games-nickname">{me.isMember ? "你的顯示名稱" : "你的暱稱"}</label>
                 <input
                   id="games-nickname"
                   autoComplete="nickname"
@@ -343,6 +386,7 @@ function App() {
                   placeholder="例如：今晚不當衛兵"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
+                  readOnly={me.isMember}
                 />
               </div>
             </section>
@@ -491,7 +535,7 @@ function App() {
                   </div>
                 </form>
                 <p className="muted small-copy">
-                  暱稱就能玩。登入後，可保存你的對局戰績。
+                  暱稱就能玩。註冊或登入後，可保存你的對局戰績。
                 </p>
               </aside>
             </section>
@@ -739,7 +783,7 @@ function App() {
     <dialog
       ref={dialog}
       aria-label={
-        panel === "history" ? "我的戰績" : me?.email ? "我的帳號" : "Email 登入"
+        panel === "history" ? "我的戰績" : me?.isMember ? "我的帳號" : "登入或註冊"
       }
         onCancel={() => setPanel(null)}
         onClick={(e) => {
@@ -757,8 +801,8 @@ function App() {
           {panel === "login" ? (
             <>
               <span className="eyebrow">MAKE IT YOUR TABLE</span>
-              <h2>{me?.email ? "你的帳號" : "留住每一場精彩。"}</h2>
-              {me?.email ? (
+              <h2>{me?.isMember ? "你的帳號" : "留住每一場精彩。"}</h2>
+              {me?.isMember ? (
                 <>
                   <div className="avatar-profile">
                     <PlayerAvatar
@@ -768,9 +812,78 @@ function App() {
                     />
                     <div>
                       <strong>{me.name}</strong>
-                      <p>{me.email}</p>
+                      <p>@{me.loginId} · {me.email}</p>
+                      <small className={me.emailVerified ? "verified" : "muted"}>
+                        {me.emailVerified ? "Email 已驗證" : "Email 尚未驗證"}
+                      </small>
                     </div>
                   </div>
+                  {!me.emailVerified && (
+                    <button
+                      className="outline wide"
+                      disabled={busy || !me.mailEnabled}
+                      onClick={() =>
+                        void run(async () => {
+                          const result = await api<{ verificationSent: boolean }>(
+                            "/auth/resend-verification",
+                            {},
+                            me.csrf,
+                          );
+                          setNotice(
+                            result.verificationSent
+                              ? "驗證信已寄出，請在 24 小時內開啟連結。"
+                              : "驗證信目前無法寄送，帳號仍可正常使用。",
+                          );
+                        })
+                      }
+                    >
+                      {me.mailEnabled ? "重新寄送驗證信" : "驗證信服務尚未設定"}
+                    </button>
+                  )}
+                  <form
+                    className="account-section"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void run(async () => {
+                        if (!name.trim()) throw new Error("顯示名稱不可空白。");
+                        await api("/profile", { name: name.trim() }, me.csrf);
+                        await refreshMe();
+                        setNotice("顯示名稱已更新；進行中的對局會保留開局名稱。");
+                      });
+                    }}
+                  >
+                    <label htmlFor="account-display-name">顯示名稱</label>
+                    <input id="account-display-name" autoComplete="nickname" maxLength={24} required value={name} onChange={(event) => setName(event.target.value)} />
+                    <button className="outline" disabled={busy || name.trim() === me.name}>儲存顯示名稱</button>
+                  </form>
+                  <form
+                    className="account-section"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void run(async () => {
+                        if (newPassword !== newPasswordConfirm)
+                          throw new Error("兩次輸入的新密碼不一致。");
+                        await api(
+                          "/auth/change-password",
+                          { currentPassword, newPassword },
+                          me.csrf,
+                        );
+                        setCurrentPassword("");
+                        setNewPassword("");
+                        setNewPasswordConfirm("");
+                        await refreshMe();
+                        setNotice("密碼已更新，其他裝置已登出。");
+                      });
+                    }}
+                  >
+                    <label htmlFor="current-password">目前密碼</label>
+                    <input id="current-password" type="password" autoComplete="current-password" required value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
+                    <label htmlFor="new-password">新密碼</label>
+                    <input id="new-password" type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+                    <label htmlFor="new-password-confirm">再次輸入新密碼</label>
+                    <input id="new-password-confirm" type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={newPasswordConfirm} onChange={(event) => setNewPasswordConfirm(event.target.value)} />
+                    <button className="outline" disabled={busy}>更新密碼</button>
+                  </form>
                   <div className="avatar-picker">
                     <label htmlFor="avatar-file">會員頭像</label>
                     <input
@@ -855,40 +968,91 @@ function App() {
                   </button>
                 </>
               ) : (
-                <form
-                  onSubmit={(e: FormEvent) => {
-                    e.preventDefault();
-                    void run(async () => {
-                      await api("/auth/request", { email }, me?.csrf);
-                      setPanel(null);
-                      setNotice(
-                        "驗證信已寄出，請在 15 分鐘內用同一瀏覽器開啟連結。",
-                      );
-                    });
-                  }}
-                >
-                  <p>輸入 Email，收到連結後確認登入。不需要密碼。</p>
-                  <label htmlFor="email">Email</label>
-                  <input
-                    id="email"
-                    type="email"
-                    autoComplete="email"
-                    required
-                    maxLength={254}
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@example.com"
-                  />
-                  <button className="wide" disabled={busy || !me?.emailEnabled}>
-                    {busy ? "寄送中…" : "寄送登入連結"}
-                  </button>
-                  {!me?.emailEnabled && (
-                    <p className="muted">Email 登入尚未開放，訪客仍可遊玩。</p>
+                <>
+                  <div className="auth-tabs" role="tablist" aria-label="帳號操作">
+                    <button type="button" className={authMode === "login" ? "active" : "text-button"} onClick={() => setAuthMode("login")}>登入</button>
+                    <button type="button" className={authMode === "register" ? "active" : "text-button"} onClick={() => setAuthMode("register")}>註冊</button>
+                  </div>
+                  {authMode === "login" ? (
+                    <form
+                      onSubmit={(event: FormEvent) => {
+                        event.preventDefault();
+                        void run(async () => {
+                          await api("/auth/login", { loginId, password }, me!.csrf);
+                          setPassword("");
+                          await refreshMe();
+                          setPanel(null);
+                          setNotice("登入成功，進行中的座位已保留。");
+                        });
+                      }}
+                    >
+                      <p>使用登入帳號與密碼登入；Email 不可用來登入。</p>
+                      <label htmlFor="login-id">登入帳號</label>
+                      <input id="login-id" autoComplete="username" pattern="[A-Za-z][A-Za-z0-9_]{2,23}" required value={loginId} onChange={(event) => setLoginId(event.target.value)} />
+                      <label htmlFor="login-password">密碼</label>
+                      <input id="login-password" type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
+                      <button className="wide" disabled={busy}>{busy ? "登入中…" : "登入"}</button>
+                      <button type="button" className="text-button wide" onClick={() => setAuthMode("forgot")}>忘記密碼</button>
+                    </form>
+                  ) : authMode === "register" ? (
+                    <form
+                      onSubmit={(event: FormEvent) => {
+                        event.preventDefault();
+                        void run(async () => {
+                          if (password !== passwordConfirm)
+                            throw new Error("兩次輸入的密碼不一致。");
+                          if (!name.trim()) throw new Error("請輸入顯示名稱。");
+                          const result = await api<{ verificationSent: boolean }>(
+                            "/auth/register",
+                            { loginId, displayName: name.trim(), email, password },
+                            me!.csrf,
+                          );
+                          setPassword("");
+                          setPasswordConfirm("");
+                          await refreshMe();
+                          setPanel(null);
+                          setNotice(
+                            result.verificationSent
+                              ? "註冊完成，驗證信已寄出。"
+                              : "註冊完成；驗證信目前無法寄送，可稍後從帳號設定重寄。",
+                          );
+                        });
+                      }}
+                    >
+                      <p>註冊後立即登入；Email 只用於驗證與重設密碼。</p>
+                      <label htmlFor="register-login-id">登入帳號</label>
+                      <input id="register-login-id" autoComplete="username" pattern="[A-Za-z][A-Za-z0-9_]{2,23}" minLength={3} maxLength={24} required value={loginId} onChange={(event) => setLoginId(event.target.value)} placeholder="例如 maple_player" />
+                      <small className="muted">英文字母開頭，只能使用英數與底線，建立後不可修改。</small>
+                      <label htmlFor="register-display-name">顯示名稱</label>
+                      <input id="register-display-name" autoComplete="nickname" maxLength={24} required value={name} onChange={(event) => setName(event.target.value)} />
+                      <label htmlFor="register-email">驗證 Email</label>
+                      <input id="register-email" type="email" autoComplete="email" maxLength={254} required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" />
+                      <label htmlFor="register-password">密碼</label>
+                      <input id="register-password" type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={password} onChange={(event) => setPassword(event.target.value)} />
+                      <label htmlFor="register-password-confirm">再次輸入密碼</label>
+                      <input id="register-password-confirm" type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={passwordConfirm} onChange={(event) => setPasswordConfirm(event.target.value)} />
+                      <button className="wide" disabled={busy}>{busy ? "建立中…" : "建立帳號"}</button>
+                    </form>
+                  ) : (
+                    <form
+                      onSubmit={(event: FormEvent) => {
+                        event.preventDefault();
+                        void run(async () => {
+                          await api("/auth/forgot-password", { email }, me!.csrf);
+                          setPanel(null);
+                          setNotice("若此 Email 綁定已驗證帳號，重設信會在幾分鐘內寄出。");
+                        });
+                      }}
+                    >
+                      <p>輸入已驗證的 Email。我們不會透露是否存在對應帳號。</p>
+                      <label htmlFor="forgot-email">驗證 Email</label>
+                      <input id="forgot-email" type="email" autoComplete="email" maxLength={254} required value={email} onChange={(event) => setEmail(event.target.value)} />
+                      <button className="wide" disabled={busy}>{busy ? "處理中…" : "寄送重設信"}</button>
+                      <button type="button" className="text-button wide" onClick={() => setAuthMode("login")}>返回登入</button>
+                    </form>
                   )}
-                  <p className="small-copy muted">
-                    對局結束前登入，即可保存這一場戰績。
-                  </p>
-                </form>
+                  <p className="small-copy muted">訪客仍可直接遊玩；註冊後可保存戰績與設定頭像。</p>
+                </>
               )}
             </>
           ) : panel === "history" && history ? (

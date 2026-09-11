@@ -1,7 +1,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createServer } from "node:net";
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
@@ -31,6 +31,10 @@ let failObjectWrites = false;
 const emails: string[] = [];
 let failMail = false;
 let serverLog = "";
+const legacyUserId = randomUUID();
+const legacyPlayerId = randomUUID();
+const legacyEmail = "legacy@example.test";
+const legacySession = randomBytes(32).toString("base64url");
 async function port() {
   const s = createServer();
   s.listen(0, "127.0.0.1");
@@ -88,6 +92,19 @@ before(
     const database = `postgresql://postgres:${password}@127.0.0.1:${pgPort}/tablefolk_test`;
     sql = new pg.Pool({ connectionString: database });
     sql.on("error", () => {});
+    await sql.query(
+      "CREATE TABLE schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())",
+    );
+    for (const name of ["001_initial.sql", "002_reusable_rooms.sql", "003_user_avatars.sql"]) {
+      await sql.query(await readFile(resolve("migrations", name), "utf8"));
+      await sql.query("INSERT INTO schema_migrations(name) VALUES($1)", [name]);
+    }
+    await sql.query("INSERT INTO users(id,email) VALUES($1,$2)", [legacyUserId, legacyEmail]);
+    await sql.query("INSERT INTO players(id,name,user_id) VALUES($1,'舊會員',$2)", [legacyPlayerId, legacyUserId]);
+    await sql.query(
+      "INSERT INTO sessions(token_hash,player_id,csrf,expires_at) VALUES($1,$2,$3,now()+interval '30 days')",
+      [createHash("sha256").update(legacySession).digest("hex"), legacyPlayerId, randomBytes(32).toString("base64url")],
+    );
     smtp = new SMTPServer({
       disabledCommands: ["AUTH", "STARTTLS"],
       authOptional: true,
@@ -315,25 +332,70 @@ function mailText() {
     ? Buffer.from(body.replace(/\s/g, ""), "base64").toString("utf8")
     : body.replace(/=\r?\n/g, "").replace(/=3D/g, "=");
 }
-async function login(b: Browser, email: string) {
-  await b.ok("/auth/request", { email });
-  const token = mailText().match(/#token=([A-Za-z0-9_-]{43})/)?.[1];
-  assert.ok(token, "SMTP delivered login token");
-  await b.ok("/auth/confirm", { token });
+const testPassword = "correct horse battery";
+const accountLoginId = (email: string) =>
+  email.split("@")[0].replace(/[^a-z0-9_]/g, "_").slice(0, 24);
+async function register(
+  b: Browser,
+  email: string,
+  loginId = accountLoginId(email),
+  displayName = b.me.name,
+) {
+  const result = await b.ok("/auth/register", {
+    loginId,
+    displayName,
+    email,
+    password: testPassword,
+  });
   b.me = await b.ok("/me");
-  return token;
+  const token = result.verificationSent
+    ? mailText().match(/#token=([A-Za-z0-9_-]{43})/)?.[1]
+    : undefined;
+  return { token, loginId };
+}
+async function login(
+  b: Browser,
+  loginId: string,
+  password = testPassword,
+) {
+  await b.ok("/auth/login", { loginId, password });
+  b.me = await b.ok("/me");
 }
 
 test("Migrations are repeatable; HTTP shell, CSRF and anonymous history permissions", async () => {
   assert.equal(
     (await sql.query("SELECT count(*) FROM schema_migrations")).rows[0].count,
-    "3",
+    "4",
   );
   await stopApp();
   await startApp();
   assert.equal(
     (await sql.query("SELECT count(*) FROM schema_migrations")).rows[0].count,
-    "3",
+    "4",
+  );
+  const legacy = (
+    await sql.query("SELECT legacy,email,login_id FROM users WHERE id=$1", [legacyUserId])
+  ).rows[0];
+  assert.equal(legacy.legacy, true);
+  assert.equal(legacy.email, legacyEmail);
+  assert.equal(legacy.login_id, null);
+  assert.equal(
+    (await sql.query("SELECT count(*) FROM sessions WHERE player_id=$1", [legacyPlayerId])).rows[0].count,
+    "0",
+  );
+  assert.equal(
+    (
+      await fetch(url + "/api/history", {
+        headers: { Cookie: `bgs_session=${legacySession}` },
+      })
+    ).status,
+    401,
+  );
+  const replacement = await new Browser().boot("新會員");
+  await register(replacement, legacyEmail, "legacy_reborn", "新會員");
+  assert.notEqual(
+    (await sql.query("SELECT id FROM users WHERE login_id='legacy_reborn'")).rows[0].id,
+    legacyUserId,
   );
   const shell = await fetch(url);
   assert.equal(shell.status, 200);
@@ -380,7 +442,7 @@ test("Member avatars use RustFS-compatible storage, update rooms and safely fall
     (await guest.raw("/profile/avatar", "POST", png, "image/png")).status,
     401,
   );
-  await login(member, "avatar@example.test");
+  await register(member, "avatar@example.test");
   assert.equal(member.me.avatarEnabled, true);
   assert.equal(member.me.avatarUrl, null);
 
@@ -447,7 +509,7 @@ test("Member avatars use RustFS-compatible storage, update rooms and safely fall
 
   await sql.query("DELETE FROM rate_limits");
   const otherBrowser = await new Browser().boot("另一台");
-  await login(otherBrowser, "avatar@example.test");
+  await login(otherBrowser, "avatar");
   assert.equal(otherBrowser.me.avatarUrl, replacement.data.avatarUrl);
 
   const replacementPath = new URL(replacement.data.avatarUrl).pathname;
@@ -679,16 +741,25 @@ test(
     assert.ok((await sql.query("SELECT r.score FROM results r JOIN matches m ON m.id=r.match_id WHERE m.room_id=$1", [t.id])).rows.every((r) => r.score === 0 || r.score === 1));
   },
 );
-test("Email GET does not consume; login rotates cookie, preserves seat, rejects replay/expiry/other browser", async () => {
+test("Registration rotates the session; Email verification is cross-browser, single-use and never logs in", async () => {
   await sql.query("DELETE FROM rate_limits");
   const t = await table(2);
   const p = t.players[0];
   const oldCookie = p.cookie;
-  const token = await login(p, "alice@example.test");
+  const { token } = await register(
+    p,
+    "alice@example.test",
+    "Alice_One",
+    "愛麗絲",
+  );
+  assert.ok(token);
   assert.notEqual(p.cookie, oldCookie);
+  assert.equal(p.me.isMember, true);
+  assert.equal(p.me.loginId, "alice_one");
+  assert.equal(p.me.name, "愛麗絲");
   assert.equal(p.me.email, "alice@example.test");
+  assert.equal(p.me.emailVerified, false);
   assert.equal((await p.view(t.id)).members[0].id, p.me.id);
-  assert.equal((await p.request("/auth/confirm", { token })).status, 400);
   assert.equal(
     (await fetch(url + "/api/me", { headers: { Cookie: oldCookie } })).status,
     200,
@@ -697,49 +768,80 @@ test("Email GET does not consume; login rotates cookie, preserves seat, rejects 
     headers: { Cookie: oldCookie },
   });
   assert.equal(stale.status, 401);
-  await p.ok("/auth/request", { email: "expired@example.test" });
-  const exp = mailText().match(/#token=([A-Za-z0-9_-]{43})/)![1];
+
+  const verifier = await new Browser().boot("Verifier");
+  const resent = await p.ok("/auth/resend-verification", {});
+  assert.equal(resent.verificationSent, true);
+  const replacementToken = mailText().match(/#token=([A-Za-z0-9_-]{43})/)![1];
+  assert.equal((await verifier.request("/auth/verify-email", { token })).status, 400);
+  await verifier.ok("/auth/verify-email", { token: replacementToken });
+  verifier.me = await verifier.ok("/me");
+  assert.equal(verifier.me.isMember, false);
+  p.me = await p.ok("/me");
+  assert.equal(p.me.emailVerified, true);
+  assert.equal(
+    (await p.request("/auth/verify-email", { token: replacementToken })).status,
+    400,
+  );
+
+  const expiring = await new Browser().boot("Expiring");
+  const { token: exp } = await register(
+    expiring,
+    "expired@example.test",
+    "expired_user",
+    "到期測試",
+  );
+  assert.ok(exp);
   const tokenHash = createHash("sha256").update(exp).digest("hex");
-  await fetch(url + "/auth/confirm");
+  await fetch(url + "/auth/verify-email");
   assert.equal(
     (
       await sql.query(
-        "SELECT consumed_at FROM login_tokens WHERE token_hash=$1",
+        "SELECT consumed_at FROM account_tokens WHERE token_hash=$1",
         [tokenHash],
       )
     ).rows[0].consumed_at,
     null,
   );
-  const other = await new Browser().boot("Other");
-  assert.equal(
-    (await other.request("/auth/confirm", { token: exp })).status,
-    400,
-  );
   await sql.query(
-    "UPDATE login_tokens SET expires_at=now()-interval '1 second' WHERE token_hash=$1",
+    "UPDATE account_tokens SET expires_at=now()-interval '1 second' WHERE token_hash=$1",
     [tokenHash],
   );
-  assert.equal((await p.request("/auth/confirm", { token: exp })).status, 400);
+  assert.equal(
+    (await verifier.request("/auth/verify-email", { token: exp })).status,
+    400,
+  );
 });
-test("SMTP failures invalidate token and leave guest play available; email requests are throttled", async () => {
+test("SMTP failure leaves a new account active and allows verification to be resent", async () => {
+  await sql.query("DELETE FROM rate_limits");
   const b = await new Browser().boot("Mail");
   failMail = true;
-  const r = await b.request("/auth/request", { email: "failure@example.test" });
+  const r = await b.request("/auth/register", {
+    loginId: "mail_failure",
+    displayName: "Mail",
+    email: "failure@example.test",
+    password: testPassword,
+  });
   failMail = false;
-  assert.equal(r.status, 503);
+  assert.equal(r.status, 200);
+  assert.equal(r.data.verificationSent, false);
+  b.me = await b.ok("/me");
+  assert.equal(b.me.isMember, true);
+  assert.equal(b.me.emailVerified, false);
   assert.equal(
     (
       await sql.query(
-        "SELECT count(*) FROM login_tokens WHERE email='failure@example.test'",
+        "SELECT count(*) FROM account_tokens t JOIN users u ON u.id=t.user_id WHERE u.email='failure@example.test'",
       )
     ).rows[0].count,
     "0",
   );
-  assert.equal(
-    (await b.request("/auth/request", { email: "failure@example.test" }))
-      .status,
-    429,
-  );
+  const resent = await b.ok("/auth/resend-verification", {});
+  assert.equal(resent.verificationSent, true);
+  const beforeForgot = emails.length;
+  const requester = await new Browser().boot("Reset requester");
+  await requester.ok("/auth/forgot-password", { email: "failure@example.test" });
+  assert.equal(emails.length, beforeForgot);
   assert.equal(
     (await b.request("/rooms", { gameId: "love-letter" })).status,
     200,
@@ -749,21 +851,113 @@ test("An account can reclaim a seat on another browser but cannot occupy two sea
   await sql.query("DELETE FROM rate_limits");
   const t = await table(2);
   const p = t.players[0];
-  await login(p, "reclaim@example.test");
+  await register(p, "reclaim@example.test", "reclaim", "原名");
+  await p.ok("/profile", { name: "開局名" });
+  p.me = await p.ok("/me");
+  assert.equal(p.me.name, "開局名");
+  assert.equal((await p.view(t.id)).members[0].name, "開局名");
   await start(t);
+  await p.ok("/profile", { name: "下局名" });
+  const active = await p.view<LLView>(t.id);
+  assert.equal(active.members[0].name, "下局名");
+  assert.equal(active.game!.players[0].name, "開局名");
+  assert.equal(
+    (await sql.query("SELECT name FROM players WHERE id=$1", [p.me.id])).rows[0].name,
+    "開局名",
+  );
   const code = (await p.view(t.id)).code;
   await sql.query("DELETE FROM rate_limits");
   const second = await new Browser().boot("另一台");
-  await login(second, "reclaim@example.test");
+  await login(second, "reclaim");
   await second.ok("/rooms/join", { code });
   second.me = await second.ok("/me");
   assert.equal(second.me.id, p.me.id);
   assert.equal((await second.view(t.id)).members.length, 2);
   const other = t.players[1];
   await sql.query("DELETE FROM rate_limits");
-  await other.ok("/auth/request", { email: "reclaim@example.test" });
-  const token = mailText().match(/#token=([A-Za-z0-9_-]{43})/)![1];
-  assert.equal((await other.request("/auth/confirm", { token })).status, 409);
+  assert.equal(
+    (
+      await other.request("/auth/login", {
+        loginId: "reclaim",
+        password: testPassword,
+      })
+    ).status,
+    409,
+  );
+});
+
+test("Verified Email resets passwords, revokes sessions, and password changes rotate the current session", async () => {
+  await sql.query("DELETE FROM rate_limits");
+  const owner = await new Browser().boot("Owner");
+  const { token } = await register(
+    owner,
+    "recovery@example.test",
+    "recovery_user",
+    "可復原會員",
+  );
+  assert.ok(token);
+  const verifier = await new Browser().boot("Verifier");
+  await verifier.ok("/auth/verify-email", { token });
+
+  const second = await new Browser().boot("Second");
+  await login(second, "RECOVERY_USER");
+  const ownerCookie = owner.cookie;
+  const secondCookie = second.cookie;
+  const requester = await new Browser().boot("Requester");
+  await requester.ok("/auth/forgot-password", { email: "recovery@example.test" });
+  const resetToken = mailText().match(/#token=([A-Za-z0-9_-]{43})/)![1];
+  await requester.ok("/auth/reset-password", {
+    token: resetToken,
+    newPassword: "new recovery password",
+  });
+  for (const cookie of [ownerCookie, secondCookie]) {
+    assert.equal(
+      (await fetch(url + "/api/history", { headers: { Cookie: cookie } })).status,
+      401,
+    );
+  }
+  const oldAttempt = await new Browser().boot("Old password");
+  const wrongPassword = await oldAttempt.request("/auth/login", {
+        loginId: "recovery_user",
+        password: testPassword,
+      });
+  assert.equal(wrongPassword.status, 401);
+  const missingAccount = await oldAttempt.request("/auth/login", {
+    loginId: "missing_user",
+    password: testPassword,
+  });
+  assert.equal(missingAccount.status, 401);
+  assert.equal(missingAccount.data.error, wrongPassword.data.error);
+  const current = await new Browser().boot("New password");
+  await login(current, "recovery_user", "new recovery password");
+  const otherSession = await new Browser().boot("Other current session");
+  await login(otherSession, "recovery_user", "new recovery password");
+  const otherSessionCookie = otherSession.cookie;
+  const beforeChange = current.cookie;
+  assert.equal(
+    (
+      await current.request("/auth/change-password", {
+        currentPassword: "wrong password",
+        newPassword: "final recovery password",
+      })
+    ).status,
+    401,
+  );
+  await current.ok("/auth/change-password", {
+    currentPassword: "new recovery password",
+    newPassword: "final recovery password",
+  });
+  assert.notEqual(current.cookie, beforeChange);
+  assert.equal(
+    (
+      await fetch(url + "/api/history", {
+        headers: { Cookie: otherSessionCookie },
+      })
+    ).status,
+    401,
+  );
+  current.me = await current.ok("/me");
+  assert.equal(current.me.loginId, "recovery_user");
 });
 test("WebSocket delivers only personal view and verifies origin/membership; rejoining works", async () => {
   const t = await table(2);
@@ -825,7 +1019,7 @@ test(
       await sql.query("DELETE FROM rate_limits");
       const t = await table(n);
       await start(t);
-      await login(t.players[0], `winner${n}@example.test`);
+      await register(t.players[0], `winner${n}@example.test`);
       await finishLoveLetter(t);
       assert.equal(
         (await sql.query("SELECT count(*) FROM matches WHERE room_id=$1", [t.id]))
@@ -846,7 +1040,7 @@ test(
       const hist = await t.players[0].ok("/history");
       assert.equal(hist.matches.length, 1);
       assert.equal(hist.matches[0].match_id, match.id);
-      await login(t.players[1], `late${n}@example.test`);
+      await register(t.players[1], `late${n}@example.test`);
       assert.equal((await t.players[1].ok("/history")).matches.length, 0);
     }
   },
@@ -859,7 +1053,7 @@ test(
     const t = await table(2);
     const host = t.players[0];
     const guest = t.players[1];
-    await login(host, "rematch@example.test");
+    await register(host, "rematch@example.test");
     await start(t);
     await finishLoveLetter(t);
 
@@ -1009,7 +1203,7 @@ test(
         "users",
         "players",
         "sessions",
-        "login_tokens",
+        "account_tokens",
         "rooms",
         "members",
         "operations",

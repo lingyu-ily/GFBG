@@ -106,7 +106,7 @@ async function viewWith(
   } = await db.query<Room>("SELECT * FROM rooms WHERE id=$1", [id]);
   requireCondition(room, 404, "房間不存在。");
   const members = await db.query(
-    "SELECT p.id,p.name,m.ready,m.position,(m.last_seen>now()-interval '45 seconds') AS online,u.avatar_key FROM members m JOIN players p ON p.id=m.player_id LEFT JOIN users u ON u.id=p.user_id WHERE m.room_id=$1 ORDER BY m.position",
+    "SELECT p.id,coalesce(u.display_name,p.name) AS name,m.ready,m.position,(m.last_seen>now()-interval '45 seconds') AS online,u.avatar_key FROM members m JOIN players p ON p.id=m.player_id LEFT JOIN users u ON u.id=p.user_id AND NOT u.legacy WHERE m.room_id=$1 ORDER BY m.position",
     [id],
   );
   requireCondition(
@@ -150,7 +150,7 @@ export async function applyRoomAction(
     requireCondition(room, 404, "房間不存在。");
     const members = (
       await db.query(
-        "SELECT m.*,p.name,p.user_id FROM members m JOIN players p ON p.id=m.player_id WHERE m.room_id=$1 ORDER BY m.position",
+        "SELECT m.*,coalesce(u.display_name,p.name) AS name,p.name AS snapshot_name,p.user_id FROM members m JOIN players p ON p.id=m.player_id LEFT JOIN users u ON u.id=p.user_id AND NOT u.legacy WHERE m.room_id=$1 ORDER BY m.position",
         [id],
       )
     ).rows;
@@ -200,6 +200,12 @@ export async function applyRoomAction(
         400,
         "先手玩家不存在。",
       );
+      for (const m of members) {
+        await db.query("UPDATE players SET name=$1 WHERE id=$2", [
+          m.name,
+          m.player_id,
+        ]);
+      }
       room.state = game.initialize(
         members.map((m) => ({ id: m.player_id, name: m.name })),
         first,
@@ -281,7 +287,7 @@ export async function applyRoomAction(
               matchId,
               m.player_id,
               m.user_id,
-              m.name,
+              m.snapshot_name,
               result.scores[m.player_id],
               result.winners.includes(m.player_id),
             ],
