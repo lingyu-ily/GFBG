@@ -782,6 +782,7 @@ function App() {
       </main>
     <dialog
       ref={dialog}
+      className={panel === "login" && !me?.isMember ? "auth-dialog" : undefined}
       aria-label={
         panel === "history" ? "我的戰績" : me?.isMember ? "我的帳號" : "登入或註冊"
       }
@@ -975,6 +976,7 @@ function App() {
                   </div>
                   {authMode === "login" ? (
                     <form
+                      className="auth-form"
                       onSubmit={(event: FormEvent) => {
                         event.preventDefault();
                         void run(async () => {
@@ -986,7 +988,6 @@ function App() {
                         });
                       }}
                     >
-                      <p>使用登入帳號與密碼登入；Email 不可用來登入。</p>
                       <label htmlFor="login-id">登入帳號</label>
                       <input id="login-id" autoComplete="username" pattern="[A-Za-z][A-Za-z0-9_]{2,23}" required value={loginId} onChange={(event) => setLoginId(event.target.value)} />
                       <label htmlFor="login-password">密碼</label>
@@ -996,6 +997,7 @@ function App() {
                     </form>
                   ) : authMode === "register" ? (
                     <form
+                      className="auth-form register-form"
                       onSubmit={(event: FormEvent) => {
                         event.preventDefault();
                         void run(async () => {
@@ -1019,22 +1021,34 @@ function App() {
                         });
                       }}
                     >
-                      <p>註冊後立即登入；Email 只用於驗證與重設密碼。</p>
-                      <label htmlFor="register-login-id">登入帳號</label>
-                      <input id="register-login-id" autoComplete="username" pattern="[A-Za-z][A-Za-z0-9_]{2,23}" minLength={3} maxLength={24} required value={loginId} onChange={(event) => setLoginId(event.target.value)} placeholder="例如 maple_player" />
-                      <small className="muted">英文字母開頭，只能使用英數與底線，建立後不可修改。</small>
-                      <label htmlFor="register-display-name">顯示名稱</label>
-                      <input id="register-display-name" autoComplete="nickname" maxLength={24} required value={name} onChange={(event) => setName(event.target.value)} />
+                      <div className="auth-field-grid">
+                        <div className="auth-field">
+                          <label htmlFor="register-login-id">登入帳號</label>
+                          <input id="register-login-id" autoComplete="username" pattern="[A-Za-z][A-Za-z0-9_]{2,23}" minLength={3} maxLength={24} required value={loginId} onChange={(event) => setLoginId(event.target.value)} placeholder="例如 maple_player" />
+                          <small className="muted">英文字母開頭，限英數與底線。</small>
+                        </div>
+                        <div className="auth-field">
+                          <label htmlFor="register-display-name">顯示名稱</label>
+                          <input id="register-display-name" autoComplete="nickname" maxLength={24} required value={name} onChange={(event) => setName(event.target.value)} />
+                        </div>
+                      </div>
                       <label htmlFor="register-email">驗證 Email</label>
                       <input id="register-email" type="email" autoComplete="email" maxLength={254} required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" />
-                      <label htmlFor="register-password">密碼</label>
-                      <input id="register-password" type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={password} onChange={(event) => setPassword(event.target.value)} />
-                      <label htmlFor="register-password-confirm">再次輸入密碼</label>
-                      <input id="register-password-confirm" type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={passwordConfirm} onChange={(event) => setPasswordConfirm(event.target.value)} />
+                      <div className="auth-field-grid">
+                        <div className="auth-field">
+                          <label htmlFor="register-password">密碼</label>
+                          <input id="register-password" type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={password} onChange={(event) => setPassword(event.target.value)} />
+                        </div>
+                        <div className="auth-field">
+                          <label htmlFor="register-password-confirm">再次輸入密碼</label>
+                          <input id="register-password-confirm" type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={passwordConfirm} onChange={(event) => setPasswordConfirm(event.target.value)} />
+                        </div>
+                      </div>
                       <button className="wide" disabled={busy}>{busy ? "建立中…" : "建立帳號"}</button>
                     </form>
                   ) : (
                     <form
+                      className="auth-form"
                       onSubmit={(event: FormEvent) => {
                         event.preventDefault();
                         void run(async () => {
@@ -1051,7 +1065,6 @@ function App() {
                       <button type="button" className="text-button wide" onClick={() => setAuthMode("login")}>返回登入</button>
                     </form>
                   )}
-                  <p className="small-copy muted">訪客仍可直接遊玩；註冊後可保存戰績與設定頭像。</p>
                 </>
               )}
             </>

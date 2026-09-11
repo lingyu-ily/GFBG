@@ -1189,18 +1189,60 @@ dialog::backdrop {
 .dialog-inner .wide {
   margin-top: 20px;
 }
+dialog.auth-dialog {
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+}
+.auth-dialog .dialog-inner {
+  padding: 24px;
+}
+.auth-dialog .dialog-inner h2 {
+  margin: 8px 0 14px;
+}
 .auth-tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
-  margin: 0 0 20px;
+  margin: 0 0 12px;
 }
 .auth-tabs button {
   margin: 0;
+  min-height: 44px;
+  padding: 9px 16px;
 }
 .auth-tabs .active {
   background: var(--accent);
   color: #101923;
+}
+.auth-form label {
+  margin: 10px 0 5px;
+}
+.auth-form input {
+  min-height: 42px;
+  padding: 9px 12px;
+}
+.auth-dialog .auth-form .wide {
+  min-height: 44px;
+  margin-top: 14px;
+  padding-block: 9px;
+}
+.auth-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+.auth-form > .auth-field-grid:first-child {
+  margin-top: 0;
+}
+.auth-field-grid label {
+  margin-top: 0;
+}
+.auth-field small {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.75rem;
+  line-height: 1.35;
 }
 .account-section {
   padding: 18px 0;
@@ -1659,6 +1701,13 @@ dialog::backdrop {
   }
 }
 @media (max-width: 600px) {
+  .auth-dialog .dialog-inner {
+    padding: 20px;
+  }
+  .auth-field-grid {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
   .rematch-panel {
     align-items: stretch;
     flex-direction: column;
@@ -1679,6 +1728,17 @@ dialog::backdrop {
   }
   .topbar nav {
     gap: 14px;
+  }
+}
+@media (max-height: 600px) {
+  .auth-dialog .dialog-inner {
+    padding-block: 16px;
+  }
+  .auth-dialog .eyebrow {
+    display: none;
+  }
+  .auth-dialog .dialog-inner h2 {
+    margin-top: 0;
   }
 }
 @media (max-width: 420px) {
