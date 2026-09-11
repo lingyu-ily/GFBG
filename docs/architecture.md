@@ -2,7 +2,7 @@
 
 ## 原則
 
-單一 Node.js 實例提供靜態頁面、HTTP API 與唯讀 WebSocket。PostgreSQL 是唯一權威資料來源，WebSocket 連線清單可隨時重建。每個房間代表一場完整多輪對局，結束後重開新房，不覆寫舊戰績。
+單一 Node.js 實例提供靜態頁面、HTTP API 與唯讀 WebSocket。PostgreSQL 是唯一權威資料來源，WebSocket 連線清單可隨時重建。房間可承載多場完整對局；每次結算建立獨立 match 與戰績，房主可保留原座位並帶全桌回到準備大廳。
 
 ## 模組邊界
 
@@ -36,7 +36,7 @@
 }
 ```
 
-外層 action 支援 `ready`、`start`、`leave`、`abort` 和 `game`。回合間的 `next` 是房主操作；其他遊戲可以沿用此共用控制語意。
+外層 action 支援 `ready`、`start`、`returnToLobby`、`leave`、`abort` 和 `game`。`returnToLobby` 只允許房主在完整結算後使用，會清除遊戲快照並重設全員準備狀態。回合間的 `next` 是房主操作；其他遊戲可以沿用此共用控制語意。
 
 WebSocket 消息為 `{type:"room",room:RoomView}` 或 `{type:"error",error:string}`。WebSocket 不接受遊戲寫入；HTTP 是唯一寫入通道。用版本避免舊快照覆蓋新狀態；失去廣播可再次 GET 取得完整最新視角，不依賴重放一串事件。
 

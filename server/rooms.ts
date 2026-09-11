@@ -202,6 +202,16 @@ export async function applyRoomAction(
         randomInt,
       );
       room.status = "active";
+    } else if (action.type === "returnToLobby") {
+      requireCondition(
+        room.host_id === who.player_id,
+        403,
+        "只有房主能回到準備大廳。",
+      );
+      requireCondition(room.status === "finished", 409, "對局尚未結束。");
+      await db.query("UPDATE members SET ready=false WHERE room_id=$1", [id]);
+      room.state = null;
+      room.status = "waiting";
     } else if (action.type === "abort") {
       requireCondition(
         room.host_id === who.player_id,
@@ -255,15 +265,16 @@ export async function applyRoomAction(
       const result = game.result(room.state);
       if (result) {
         room.status = "finished";
+        const matchId = randomUUID();
         await db.query(
-          "INSERT INTO matches(id,game_id,rules_version) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
-          [id, room.game_id, game.info.rulesVersion],
+          "INSERT INTO matches(id,room_id,game_id,rules_version) VALUES($1,$2,$3,$4)",
+          [matchId, id, room.game_id, game.info.rulesVersion],
         );
         for (const m of members)
           await db.query(
-            "INSERT INTO results(match_id,player_id,user_id,name,score,won) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
+            "INSERT INTO results(match_id,player_id,user_id,name,score,won) VALUES($1,$2,$3,$4,$5,$6)",
             [
-              id,
+              matchId,
               m.player_id,
               m.user_id,
               m.name,
@@ -293,7 +304,7 @@ export async function heartbeat(room: string, player: string) {
 export async function transferHosts() {
   return transaction(async (db) => {
     const rooms = await db.query(
-      "SELECT r.* FROM rooms r JOIN members h ON h.room_id=r.id AND h.player_id=r.host_id WHERE r.status IN ('waiting','active') AND h.last_seen<now()-interval '60 seconds' ORDER BY r.id FOR UPDATE OF r SKIP LOCKED",
+      "SELECT r.* FROM rooms r JOIN members h ON h.room_id=r.id AND h.player_id=r.host_id WHERE r.status IN ('waiting','active','finished') AND h.last_seen<now()-interval '60 seconds' ORDER BY r.id FOR UPDATE OF r SKIP LOCKED",
     );
     const changed: string[] = [];
     for (const r of rooms.rows) {

@@ -192,6 +192,46 @@ async function start(t: Awaited<ReturnType<typeof table>>) {
     first: t.players[0].me.id,
   });
 }
+async function finishLoveLetter(t: Awaited<ReturnType<typeof table>>) {
+  let turns = 0;
+  while (turns++ < 1000) {
+    const view = await t.players[0].view(t.id);
+    if (view.status === "finished") return;
+    if (view.game!.phase === "roundEnd") {
+      await t.players[0].command(t.id, {
+        type: "game",
+        action: { type: "next" },
+      });
+      continue;
+    }
+    const actor = t.players.find((p) => p.me.id === view.game!.current)!;
+    const own = await actor.view(t.id);
+    const g = own.game!;
+    if (g.phase === "chancellor") {
+      const hand = g.players.find((p) => p.id === actor.me.id)!.hand!;
+      await actor.command(t.id, {
+        type: "game",
+        action: {
+          type: "chancellor",
+          keep: hand[0].id,
+          bottom: hand.slice(1).map((c) => c.id),
+        },
+      });
+    } else {
+      const legal = g.legal.cards[0];
+      await actor.command(t.id, {
+        type: "game",
+        action: {
+          type: "play",
+          card: legal.id,
+          ...(legal.needsTarget ? { target: legal.targets[0] } : {}),
+          ...(legal.needsGuess ? { guess: 9 } : {}),
+        },
+      });
+    }
+  }
+  assert.fail("Love Letter match did not finish in 1000 turns");
+}
 function mailText() {
   const raw = emails.at(-1)!;
   const split = raw.indexOf("\r\n\r\n");
@@ -213,13 +253,13 @@ async function login(b: Browser, email: string) {
 test("Migrations are repeatable; HTTP shell, CSRF and anonymous history permissions", async () => {
   assert.equal(
     (await sql.query("SELECT count(*) FROM schema_migrations")).rows[0].count,
-    "1",
+    "2",
   );
   await stopApp();
   await startApp();
   assert.equal(
     (await sql.query("SELECT count(*) FROM schema_migrations")).rows[0].count,
-    "1",
+    "2",
   );
   const shell = await fetch(url);
   assert.equal(shell.status, 200);
@@ -275,8 +315,16 @@ test("Rooms require membership; race joins cap at six; start requires ready; sea
   assert.equal(r.game.players[1].hand, undefined);
   await t.players[0].command(t.id, { type: "abort" });
   assert.equal(
-    (await sql.query("SELECT 1 FROM matches WHERE id=$1", [t.id])).rowCount,
+    (await sql.query("SELECT 1 FROM matches WHERE room_id=$1", [t.id])).rowCount,
     0,
+  );
+  assert.equal(
+    (await t.players[0].request(`/rooms/${t.id}/actions`, {
+      operationId: randomUUID(),
+      version: (await t.players[0].view(t.id)).version,
+      action: { type: "returnToLobby" },
+    })).status,
+    409,
   );
   const seats = await table(5);
   const a = await new Browser().boot("A"),
@@ -406,9 +454,9 @@ test(
     const finished = await t.players[0].view<SHView>(t.id);
     assert.equal(finished.status, "finished", `did not finish in ${actions} actions`);
     assert.ok(finished.game!.players.every((p) => p.character));
-    assert.equal((await sql.query("SELECT count(*) FROM matches WHERE id=$1", [t.id])).rows[0].count, "1");
-    assert.equal((await sql.query("SELECT count(*) FROM results WHERE match_id=$1", [t.id])).rows[0].count, "4");
-    assert.ok((await sql.query("SELECT score FROM results WHERE match_id=$1", [t.id])).rows.every((r) => r.score === 0 || r.score === 1));
+    assert.equal((await sql.query("SELECT count(*) FROM matches WHERE room_id=$1", [t.id])).rows[0].count, "1");
+    assert.equal((await sql.query("SELECT count(*) FROM results r JOIN matches m ON m.id=r.match_id WHERE m.room_id=$1", [t.id])).rows[0].count, "4");
+    assert.ok((await sql.query("SELECT r.score FROM results r JOIN matches m ON m.id=r.match_id WHERE m.room_id=$1", [t.id])).rows.every((r) => r.score === 0 || r.score === 1));
   },
 );
 test(
@@ -457,9 +505,9 @@ test(
     const finished = await t.players[0].view<SRView>(t.id);
     assert.equal(finished.status, "finished", `Airship did not finish in ${actions} actions`);
     assert.ok(finished.game!.players.every((p) => p.character));
-    assert.equal((await sql.query("SELECT count(*) FROM matches WHERE id=$1", [t.id])).rows[0].count, "1");
-    assert.equal((await sql.query("SELECT count(*) FROM results WHERE match_id=$1", [t.id])).rows[0].count, "10");
-    assert.ok((await sql.query("SELECT score FROM results WHERE match_id=$1", [t.id])).rows.every((r) => r.score === 0 || r.score === 1));
+    assert.equal((await sql.query("SELECT count(*) FROM matches WHERE room_id=$1", [t.id])).rows[0].count, "1");
+    assert.equal((await sql.query("SELECT count(*) FROM results r JOIN matches m ON m.id=r.match_id WHERE m.room_id=$1", [t.id])).rows[0].count, "10");
+    assert.ok((await sql.query("SELECT r.score FROM results r JOIN matches m ON m.id=r.match_id WHERE m.room_id=$1", [t.id])).rows.every((r) => r.score === 0 || r.score === 1));
   },
 );
 test("Email GET does not consume; login rotates cookie, preserves seat, rejects replay/expiry/other browser", async () => {
@@ -576,9 +624,12 @@ test("WebSocket delivers only personal view and verifies origin/membership; rejo
   await p.ok("/rooms/join", { code });
   assert.equal((await p.view(t.id)).members.length, 2);
 });
-test("Host transfers after 60 seconds to an online member", async () => {
+test("A finished room transfers an offline host to an online member", async () => {
   await sql.query("DELETE FROM rate_limits");
   const t = await table(2);
+  await start(t);
+  await finishLoveLetter(t);
+  assert.equal((await t.players[0].view(t.id)).status, "finished");
   const p = t.players[1];
   await sql.query(
     "UPDATE members SET last_seen=now()-interval '65 seconds' WHERE room_id=$1 AND player_id=$2",
@@ -606,63 +657,107 @@ test(
       const t = await table(n);
       await start(t);
       await login(t.players[0], `winner${n}@example.test`);
-      let turns = 0;
-      while (turns++ < 1000) {
-        const view = await t.players[0].view(t.id);
-        if (view.status === "finished") break;
-        if (view.game!.phase === "roundEnd") {
-          await t.players[0].command(t.id, {
-            type: "game",
-            action: { type: "next" },
-          });
-          continue;
-        }
-        const actor = t.players.find((p) => p.me.id === view.game!.current)!;
-        const own = await actor.view(t.id);
-        const g = own.game!;
-        if (g.phase === "chancellor") {
-          const hand = g.players.find((p) => p.id === actor.me.id)!.hand!;
-          await actor.command(t.id, {
-            type: "game",
-            action: {
-              type: "chancellor",
-              keep: hand[0].id,
-              bottom: hand.slice(1).map((c) => c.id),
-            },
-          });
-        } else {
-          const l = g.legal.cards[0];
-          await actor.command(t.id, {
-            type: "game",
-            action: {
-              type: "play",
-              card: l.id,
-              ...(l.needsTarget ? { target: l.targets[0] } : {}),
-              ...(l.needsGuess ? { guess: 9 } : {}),
-            },
-          });
-        }
-      }
-      assert.ok(turns < 1000);
+      await finishLoveLetter(t);
       assert.equal(
-        (await sql.query("SELECT count(*) FROM matches WHERE id=$1", [t.id]))
+        (await sql.query("SELECT count(*) FROM matches WHERE room_id=$1", [t.id]))
           .rows[0].count,
         "1",
       );
+      const match = (
+        await sql.query("SELECT id FROM matches WHERE room_id=$1", [t.id])
+      ).rows[0];
       assert.equal(
         (
           await sql.query("SELECT count(*) FROM results WHERE match_id=$1", [
-            t.id,
+            match.id,
           ])
         ).rows[0].count,
         String(n),
       );
       const hist = await t.players[0].ok("/history");
       assert.equal(hist.matches.length, 1);
-      assert.equal(hist.matches[0].match_id, t.id);
+      assert.equal(hist.matches[0].match_id, match.id);
       await login(t.players[1], `late${n}@example.test`);
       assert.equal((await t.players[1].ok("/history")).matches.length, 0);
     }
+  },
+);
+test(
+  "Finished rooms return to the lobby and record multiple matches with stable seats",
+  { timeout: 120000 },
+  async () => {
+    await sql.query("DELETE FROM rate_limits");
+    const t = await table(2);
+    const host = t.players[0];
+    const guest = t.players[1];
+    await login(host, "rematch@example.test");
+    await start(t);
+    await finishLoveLetter(t);
+
+    const finished = await host.view(t.id);
+    const memberIds = finished.members.map((m) => m.id);
+    assert.equal(finished.status, "finished");
+    assert.equal(
+      (await guest.request(`/rooms/${t.id}/actions`, {
+        operationId: randomUUID(),
+        version: finished.version,
+        action: { type: "returnToLobby" },
+      })).status,
+      403,
+    );
+
+    const reset = {
+      operationId: randomUUID(),
+      version: finished.version,
+      action: { type: "returnToLobby" } as const,
+    };
+    await host.ok(`/rooms/${t.id}/actions`, reset);
+    assert.equal((await host.ok(`/rooms/${t.id}/actions`, reset)).duplicate, true);
+    const waiting = await host.view(t.id);
+    assert.equal(waiting.status, "waiting");
+    assert.equal(waiting.game, null);
+    assert.equal(waiting.code, finished.code);
+    assert.equal(waiting.gameId, finished.gameId);
+    assert.equal(waiting.hostId, finished.hostId);
+    assert.deepEqual(waiting.members.map((m) => m.id), memberIds);
+    assert.ok(waiting.members.every((m) => !m.ready));
+    assert.equal(
+      (await host.request(`/rooms/${t.id}/actions`, {
+        ...reset,
+        operationId: randomUUID(),
+      })).status,
+      409,
+    );
+
+    const newcomer = await new Browser().boot("替補");
+    await newcomer.ok("/rooms/join", { code: waiting.code });
+    assert.equal((await host.view(t.id)).members.length, 3);
+    await newcomer.command(t.id, { type: "leave" });
+    assert.equal((await host.view(t.id)).members.length, 2);
+
+    await start(t);
+    assert.equal(
+      (await host.request(`/rooms/${t.id}/actions`, {
+        operationId: randomUUID(),
+        version: (await host.view(t.id)).version,
+        action: { type: "returnToLobby" },
+      })).status,
+      409,
+    );
+    await finishLoveLetter(t);
+
+    const matches = await sql.query(
+      "SELECT id FROM matches WHERE room_id=$1 ORDER BY finished_at",
+      [t.id],
+    );
+    assert.equal(matches.rowCount, 2);
+    assert.notEqual(matches.rows[0].id, matches.rows[1].id);
+    assert.equal(
+      (await sql.query("SELECT count(*) FROM results r JOIN matches m ON m.id=r.match_id WHERE m.room_id=$1", [t.id])).rows[0].count,
+      "4",
+    );
+    const history = await host.ok("/history");
+    assert.equal(history.matches.length, 2);
   },
 );
 test(

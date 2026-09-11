@@ -1,5 +1,12 @@
 # 驗收紀錄
 
+## 2026-09-11 同房續局增量驗收
+
+- `npm test`：36 個規則測試通過。
+- `npm run build`：TypeScript、Vite 前端與伺服器 bundle 建置通過。
+- `npm run test:integration`：14 個整合測試通過；同房返回準備大廳、全員取消準備、完成房房主轉移、連續兩場獨立戰績皆已驗證。
+- 備份還原測試因本次環境未設定 `PG_BIN` 而跳過；下方 2026-09-10 的完整備份還原紀錄不受影響。
+
 日期：2026-09-10。環境：Windows、Node.js 24.19.0；獨立測試 PostgreSQL 18.4，備份工具 PostgreSQL 18.6。未連接使用者既有 PostgreSQL 或 SMTP。
 
 | 檢查 | 結果 |

@@ -733,6 +733,21 @@ footer > span:first-child {
   justify-content: space-between;
   margin: 25px 0;
 }
+.rematch-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 24px;
+  padding: 24px;
+}
+.rematch-panel h2,
+.rematch-panel p {
+  margin: 6px 0 0;
+}
+.rematch-panel > p {
+  color: var(--muted);
+}
 .danger {
   color: #e5a4ae;
 }
@@ -1580,6 +1595,10 @@ dialog::backdrop {
   }
 }
 @media (max-width: 600px) {
+  .rematch-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
   .brand-full {
     display: none;
   }

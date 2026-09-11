@@ -524,6 +524,8 @@ function App() {
                     ? "人到齊，就開場。"
                     : room.status === "aborted"
                       ? "這桌已結束。"
+                      : room.status === "finished"
+                        ? "這場已結束。"
                       : roomUi?.activeTitle || "對局進行中。"}
                 </h1>
               </div>
@@ -663,6 +665,25 @@ function App() {
               />
             ) : (
               <p>此遊戲介面尚未註冊。</p>
+            )}
+            {room.status === "finished" && (
+              <section className="panel rematch-panel">
+                <div>
+                  <span className="eyebrow">NEXT GAME</span>
+                  <h2>同桌，再來一場？</h2>
+                  <p className="muted">返回準備大廳後，所有人需要重新準備。</p>
+                </div>
+                {isHost ? (
+                  <button
+                    disabled={busy || !!pending}
+                    onClick={() => void action({ type: "returnToLobby" })}
+                  >
+                    回到準備大廳 →
+                  </button>
+                ) : (
+                  <p>等待房主帶大家回到準備大廳。</p>
+                )}
+              </section>
             )}
             <div className="room-bottom">
               <button

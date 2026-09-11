@@ -18,6 +18,7 @@ export interface RoomView<GameView = unknown> {
 export type RoomAction =
   | { type: "ready"; ready: boolean }
   | { type: "start"; first?: string }
+  | { type: "returnToLobby" }
   | { type: "abort" }
   | { type: "leave" }
   | { type: "game"; action: unknown };
