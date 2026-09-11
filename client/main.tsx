@@ -483,72 +483,74 @@ function App() {
                 </div>
                 <span className="muted">{games.length} 款桌遊 · 持續擴充</span>
               </div>
-              {games.map((g) => {
-                const ui = gameUis[g.id];
-                if (!ui) return null;
-                return (
-                  <article className={`game-feature ${ui.theme}`} key={g.id}>
-                    <div className="game-cover">
-                      <div className="cover-line">{ui.coverLine}</div>
-                      <span className="cover-number">{ui.coverNumber}</span>
-                      <div className="cover-title">
-                        <span>{ui.englishName.toUpperCase()}</span>
-                        <strong>{g.name.split("").join(" ")}</strong>
-                        <i>{ui.coverTagline}</i>
-                      </div>
-                      <div className="cover-bottom">
-                        <span>{ui.coverCredit}</span>
-                        <span>{ui.coverDetail}</span>
-                      </div>
-                    </div>
-                    <div className="game-description">
-                      <span className="pill">{ui.genres}</span>
-                      <h3>
-                        {g.name}
-                        <span>{ui.englishName}</span>
-                      </h3>
-                      <p>{g.description}</p>
-                      <div className="game-facts">
-                        <div>
-                          <strong>{g.minPlayers}–{g.maxPlayers}</strong>
-                          <span>位玩家</span>
+              <div className="games-grid">
+                {games.map((g) => {
+                  const ui = gameUis[g.id];
+                  if (!ui) return null;
+                  return (
+                    <article className={`game-feature ${ui.theme}`} key={g.id}>
+                      <div className="game-cover">
+                        <div className="cover-line">{ui.coverLine}</div>
+                        <span className="cover-number">{ui.coverNumber}</span>
+                        <div className="cover-title">
+                          <span>{ui.englishName.toUpperCase()}</span>
+                          <strong>{g.name.split("").join(" ")}</strong>
+                          <i>{ui.coverTagline}</i>
                         </div>
-                        <div>
-                          <strong>{ui.duration}</strong>
-                          <span>左右一局</span>
-                        </div>
-                        <div>
-                          <strong>{ui.complexity}</strong>
-                          <span>{ui.complexityNote}</span>
+                        <div className="cover-bottom">
+                          <span>{ui.coverCredit}</span>
+                          <span>{ui.coverDetail}</span>
                         </div>
                       </div>
-                      <button
-                        className="wide"
-                        disabled={busy || !name.trim()}
-                        onClick={() =>
-                          void run(async () => {
-                            await saveName();
-                            const { id } = await api(
-                              "/rooms",
-                              { gameId: g.id, isPublic: createPublic },
-                              me.csrf,
-                            );
-                            await refreshMe();
-                            navigate(`/rooms/${id}`);
-                          })
-                        }
-                      >
-                        建立{createPublic ? "公開" : "私人"}房間 <span aria-hidden="true">↗</span>
-                      </button>
-                      <small>
-                        {name.trim()
-                          ? "把房間連結傳給朋友，就能一起玩。"
-                          : "先在上方填入暱稱，就能開桌。"}
-                      </small>
-                    </div>
-                  </article>
-                );
-              })}
+                      <div className="game-description">
+                        <span className="pill">{ui.genres}</span>
+                        <h3>
+                          {g.name}
+                          <span>{ui.englishName}</span>
+                        </h3>
+                        <p>{g.description}</p>
+                        <div className="game-facts">
+                          <div>
+                            <strong>{g.minPlayers}–{g.maxPlayers}</strong>
+                            <span>位玩家</span>
+                          </div>
+                          <div>
+                            <strong>{ui.duration}</strong>
+                            <span>左右一局</span>
+                          </div>
+                          <div>
+                            <strong>{ui.complexity}</strong>
+                            <span>{ui.complexityNote}</span>
+                          </div>
+                        </div>
+                        <button
+                          className="wide"
+                          disabled={busy || !name.trim()}
+                          onClick={() =>
+                            void run(async () => {
+                              await saveName();
+                              const { id } = await api(
+                                "/rooms",
+                                { gameId: g.id, isPublic: createPublic },
+                                me.csrf,
+                              );
+                              await refreshMe();
+                              navigate(`/rooms/${id}`);
+                            })
+                          }
+                        >
+                          建立{createPublic ? "公開" : "私人"}房間 <span aria-hidden="true">↗</span>
+                        </button>
+                        <small>
+                          {name.trim()
+                            ? "把房間連結傳給朋友，就能一起玩。"
+                            : "先在上方填入暱稱，就能開桌。"}
+                        </small>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
             </section>
             <footer>
               <span>古楓桌遊 GFBG</span>

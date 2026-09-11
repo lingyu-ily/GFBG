@@ -374,16 +374,21 @@ main {
 .games-library {
   margin-top: 44px;
 }
-.game-feature {
+.games-grid {
   display: grid;
-  grid-template-columns: 1.3fr 1fr;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  gap: 24px;
+}
+.game-feature {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
   border: 1px solid var(--line);
   border-radius: 12px;
   overflow: hidden;
   background: #1b2532;
-}
-.game-feature + .game-feature {
-  margin-top: 24px;
 }
 .game-feature.shadow-hunters .game-cover {
   background:
@@ -404,14 +409,15 @@ main {
 }
 .game-cover {
   background: #682d43;
-  min-height: 366px;
+  aspect-ratio: 4 / 3;
+  min-height: 0;
   position: relative;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 27px 32px;
+  padding: 22px;
   isolation: isolate;
-  border-right: 1px solid #9a6670;
+  border-bottom: 1px solid #9a6670;
 }
 .game-cover:before {
   content: "";
@@ -435,28 +441,37 @@ main {
 }
 .cover-title {
   text-align: center;
+  min-width: 0;
+  overflow: hidden;
   padding: 24px 0;
 }
 .cover-title > span {
   display: block;
   font-family: Georgia, serif;
-  letter-spacing: 0.36em;
+  letter-spacing: 0.18em;
   color: #f0cbb4;
-  font-size: 1.05rem;
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .cover-title strong {
-  display: block;
+  display: -webkit-box;
+  overflow: hidden;
   font-family: "Noto Serif TC", "PMingLiU", serif;
-  font-size: clamp(3rem, 6vw, 5.5rem);
+  font-size: clamp(2.2rem, 3vw, 3.4rem);
   font-weight: 400;
+  line-height: 1.15;
   letter-spacing: 0.1em;
   margin: 15px 0;
   color: #fff1e3;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 .cover-title i {
   font-style: normal;
   display: block;
-  font-size: 0.875rem;
+  font-size: 0.75rem;
   color: #e7c5c5;
   letter-spacing: 0.1em;
 }
@@ -469,7 +484,11 @@ main {
   gap: 10px;
 }
 .game-description {
-  padding: 32px 36px;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  padding: 24px;
 }
 .pill {
   display: inline-block;
@@ -482,24 +501,38 @@ main {
   letter-spacing: 0.06em;
 }
 .game-description h3 {
-  font-size: 2rem;
+  display: -webkit-box;
+  min-height: 3.15rem;
+  overflow: hidden;
+  font-size: 1.45rem;
+  line-height: 1.35;
   margin: 14px 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 .game-description h3 span {
+  display: block;
   font-family: Georgia, serif;
   font-weight: 400;
-  font-size: 1.25rem;
-  margin-left: 16px;
+  font-size: 0.92rem;
+  margin-left: 0;
   color: #b9a69d;
 }
 .game-description p {
+  display: -webkit-box;
+  min-height: 4.65rem;
+  overflow: hidden;
   color: #aeb8c5;
-  font-size: 0.95rem;
+  font-size: 0.875rem;
+  line-height: 1.55;
   margin-bottom: 22px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 .game-facts {
-  display: flex;
-  gap: 32px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
   margin-bottom: 28px;
 }
 .game-facts > div {
@@ -508,15 +541,18 @@ main {
   gap: 4px;
 }
 .game-facts strong {
-  font-size: 1.2rem;
+  font-size: 1rem;
   font-weight: 600;
 }
 .game-facts strong > span {
   font-size: 0.875rem;
 }
 .game-facts > div > span {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   color: #a5b0bf;
+}
+.game-description > .wide {
+  margin-top: auto;
 }
 .wide {
   width: 100%;
@@ -1506,6 +1542,9 @@ dialog.auth-dialog {
   }
 }
 @media (max-width: 1150px) {
+  .games-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .game-layout {
     grid-template-columns: 1fr;
   }
@@ -1565,20 +1604,14 @@ dialog.auth-dialog {
     max-width: none;
     justify-self: stretch;
   }
-  .game-feature {
-    grid-template-columns: 1fr;
-  }
   .game-cover {
-    min-height: 330px;
-    border-right: 0;
-    border-bottom: 1px solid #9a6670;
+    min-height: 0;
   }
   .game-description {
     padding: 26px;
   }
   .game-facts {
     justify-content: space-between;
-    max-width: 340px;
   }
   .section-heading {
     align-items: start;
@@ -1701,6 +1734,9 @@ dialog.auth-dialog {
   }
 }
 @media (max-width: 600px) {
+  .games-grid {
+    grid-template-columns: 1fr;
+  }
   .auth-dialog .dialog-inner {
     padding: 20px;
   }
@@ -1783,13 +1819,13 @@ dialog.auth-dialog {
   }
   .game-cover {
     padding: 26px;
-    min-height: 300px;
+    min-height: 0;
   }
   .cover-line {
     font-size: 0.5rem;
   }
   .cover-title strong {
-    font-size: 4rem;
+    font-size: 2.2rem;
   }
   .cover-bottom {
     font-size: 0.5rem;
