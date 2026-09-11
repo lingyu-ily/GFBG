@@ -300,6 +300,114 @@ function App() {
             </button>
             {!token && <p>連結已移除或遺失，請重新索取驗證信。</p>}
           </section>
+        ) : path === "/games" ? (
+          <>
+            <section className="games-page-header">
+              <button className="text-button" onClick={() => navigate("/")}>
+                ← 返回大廳
+              </button>
+              <span className="eyebrow">THE GAME SHELF</span>
+              <h1>今天，玩哪一款？</h1>
+              <p>選好遊戲、開一間私人房，再把邀請連結傳給朋友。</p>
+            </section>
+            <section className="games-profile panel">
+              <div>
+                <span className="eyebrow">YOUR NAME AT THE TABLE</span>
+                <h2>先讓朋友認出你</h2>
+                <p>暱稱就能開玩；登入後還能保存對局戰績。</p>
+              </div>
+              <div className="games-profile-field">
+                <label htmlFor="games-nickname">你的暱稱</label>
+                <input
+                  id="games-nickname"
+                  autoComplete="nickname"
+                  maxLength={24}
+                  placeholder="例如：今晚不當衛兵"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </div>
+            </section>
+            <section className="library games-library">
+              <div className="section-heading">
+                <div>
+                  <span className="eyebrow">ALL GAMES</span>
+                  <h2>挑一款，就開桌。</h2>
+                </div>
+                <span className="muted">{games.length} 款桌遊 · 持續擴充</span>
+              </div>
+              {games.map((g) => {
+                const ui = gameUis[g.id];
+                if (!ui) return null;
+                return (
+                  <article className={`game-feature ${ui.theme}`} key={g.id}>
+                    <div className="game-cover">
+                      <div className="cover-line">{ui.coverLine}</div>
+                      <span className="cover-number">{ui.coverNumber}</span>
+                      <div className="cover-title">
+                        <span>{ui.englishName.toUpperCase()}</span>
+                        <strong>{g.name.split("").join(" ")}</strong>
+                        <i>{ui.coverTagline}</i>
+                      </div>
+                      <div className="cover-bottom">
+                        <span>{ui.coverCredit}</span>
+                        <span>{ui.coverDetail}</span>
+                      </div>
+                    </div>
+                    <div className="game-description">
+                      <span className="pill">{ui.genres}</span>
+                      <h3>
+                        {g.name}
+                        <span>{ui.englishName}</span>
+                      </h3>
+                      <p>{g.description}</p>
+                      <div className="game-facts">
+                        <div>
+                          <strong>{g.minPlayers}–{g.maxPlayers}</strong>
+                          <span>位玩家</span>
+                        </div>
+                        <div>
+                          <strong>{ui.duration}</strong>
+                          <span>左右一局</span>
+                        </div>
+                        <div>
+                          <strong>{ui.complexity}</strong>
+                          <span>{ui.complexityNote}</span>
+                        </div>
+                      </div>
+                      <button
+                        className="wide"
+                        disabled={busy || !name.trim()}
+                        onClick={() =>
+                          void run(async () => {
+                            await saveName();
+                            const { id } = await api(
+                              "/rooms",
+                              { gameId: g.id },
+                              me.csrf,
+                            );
+                            await refreshMe();
+                            navigate(`/rooms/${id}`);
+                          })
+                        }
+                      >
+                        建立私人房間 <span aria-hidden="true">↗</span>
+                      </button>
+                      <small>
+                        {name.trim()
+                          ? "把房間連結傳給朋友，就能一起玩。"
+                          : "先在上方填入暱稱，就能開桌。"}
+                      </small>
+                    </div>
+                  </article>
+                );
+              })}
+            </section>
+            <footer>
+              <span>古楓桌遊 GFBG</span>
+              <span>一點運氣，一點默契。剩下的，交給朋友。</span>
+            </footer>
+          </>
         ) : !roomId ? (
           <>
             <section className="hero">
@@ -318,6 +426,9 @@ function App() {
                   <br />
                   選一款遊戲，邀請朋友，好戲就開場。
                 </p>
+                <button className="hero-games-button" onClick={() => navigate("/games")}>
+                  選擇遊戲 <span aria-hidden="true">→</span>
+                </button>
                 <div className="hero-foot">
                   <span>私人房間</span>
                   <span>免註冊開玩</span>
@@ -365,81 +476,6 @@ function App() {
                   暱稱就能玩。登入後，可保存你的對局戰績。
                 </p>
               </aside>
-            </section>
-            <section className="library">
-              <div className="section-heading">
-                <div>
-                  <span className="eyebrow">THE GAME SHELF</span>
-                  <h2>今天，玩哪一款？</h2>
-                </div>
-                <span className="muted">{games.length} 款桌遊 · 持續擴充</span>
-              </div>
-              {games.map((g) => {
-                const ui = gameUis[g.id];
-                if (!ui) return null;
-                return (
-                <article className={`game-feature ${ui.theme}`} key={g.id}>
-                  <div className="game-cover">
-                    <div className="cover-line">{ui.coverLine}</div>
-                    <span className="cover-number">{ui.coverNumber}</span>
-                    <div className="cover-title">
-                      <span>{ui.englishName.toUpperCase()}</span>
-                      <strong>{g.name.split("").join(" ")}</strong>
-                      <i>{ui.coverTagline}</i>
-                    </div>
-                    <div className="cover-bottom">
-                      <span>{ui.coverCredit}</span>
-                      <span>{ui.coverDetail}</span>
-                    </div>
-                  </div>
-                  <div className="game-description">
-                    <span className="pill">{ui.genres}</span>
-                    <h3>
-                      {g.name}
-                      <span>{ui.englishName}</span>
-                    </h3>
-                    <p>{g.description}</p>
-                    <div className="game-facts">
-                      <div>
-                        <strong>{g.minPlayers}–{g.maxPlayers}</strong>
-                        <span>位玩家</span>
-                      </div>
-                      <div>
-                        <strong>{ui.duration}</strong>
-                        <span>左右一局</span>
-                      </div>
-                      <div>
-                        <strong>{ui.complexity}</strong>
-                        <span>{ui.complexityNote}</span>
-                      </div>
-                    </div>
-                    <button
-                      className="wide"
-                      disabled={busy || !name.trim()}
-                      onClick={() =>
-                        void run(async () => {
-                          await saveName();
-                          const { id } = await api(
-                            "/rooms",
-                            { gameId: g.id },
-                            me.csrf,
-                          );
-                          await refreshMe();
-                          navigate(`/rooms/${id}`);
-                        })
-                      }
-                    >
-                      建立私人房間 <span aria-hidden="true">↗</span>
-                    </button>
-                    <small>
-                      {name.trim()
-                        ? "把房間連結傳給朋友，就能一起玩。"
-                        : "先在上方填入暱稱，就能開桌。"}
-                    </small>
-                  </div>
-                </article>
-                );
-              })}
             </section>
             {me.rooms.length > 0 && (
               <section className="resume">

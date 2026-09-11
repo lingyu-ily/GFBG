@@ -267,6 +267,9 @@ main {
   margin-bottom: 24px;
   font-size: 1.05rem;
 }
+.hero-games-button {
+  margin-bottom: 24px;
+}
 .tiny-seal {
   margin-right: 9px;
 }
@@ -335,6 +338,39 @@ main {
 .library {
   border-top: 1px solid var(--line);
   padding-top: 32px;
+}
+.games-page-header {
+  max-width: 760px;
+  padding: 54px 0 32px;
+}
+.games-page-header > .text-button {
+  margin-bottom: 30px;
+}
+.games-page-header h1 {
+  font-size: clamp(2.8rem, 5vw, 4.8rem);
+  margin: 12px 0 18px;
+}
+.games-page-header p {
+  margin-bottom: 0;
+}
+.games-profile {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
+  align-items: center;
+  gap: 48px;
+  padding: 28px 32px;
+}
+.games-profile h2 {
+  margin: 6px 0;
+}
+.games-profile p {
+  margin-bottom: 0;
+}
+.games-profile-field label {
+  margin-top: 0;
+}
+.games-library {
+  margin-top: 44px;
 }
 .game-feature {
   display: grid;
@@ -1392,6 +1428,10 @@ dialog::backdrop {
     padding: 42px 0;
     gap: 30px;
   }
+  .games-profile {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
   .hero h1 {
     font-size: 4rem;
   }
@@ -1587,6 +1627,15 @@ dialog::backdrop {
     font-size: 3.7rem;
   }
   .join-panel {
+    padding: 23px;
+  }
+  .games-page-header {
+    padding-top: 36px;
+  }
+  .games-page-header h1 {
+    font-size: 3.2rem;
+  }
+  .games-profile {
     padding: 23px;
   }
   .game-cover {
