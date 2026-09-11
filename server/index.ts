@@ -44,6 +44,15 @@ import {
   saveAvatar,
   verifyAvatarStore,
 } from "./avatars.js";
+import {
+  playerRoomChat,
+  publicChat,
+  sendPlayerRoomChat,
+  sendPublicChat,
+  sendSpectatorRoomChat,
+  spectatorRoomChat,
+} from "./chat.js";
+import type { ChatMessage } from "../shared/chat.js";
 
 const app = express();
 app.disable("x-powered-by");
@@ -139,6 +148,15 @@ const password = z.string().refine((value) => {
   return length >= 8 && length <= 128;
 }, "密碼必須為 8–128 個字元");
 const authToken = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+const chatBody = z.object({
+  messageId: uuid,
+  text: z
+    .string()
+    .trim()
+    .min(1)
+    .max(500)
+    .regex(/^[^\p{Cc}\p{Cf}]+$/u),
+});
 app.post("/api/profile", async (req, res) => {
   const { name } = z.object({ name: nickname }).parse(req.body);
   const who: Identity = res.locals.who;
@@ -276,6 +294,18 @@ app.get("/api/history", async (_req, res) => {
   );
   res.json({ matches: rows.rows, summary: summary.rows[0] });
 });
+app.get("/api/chat/public", async (_req, res) =>
+  res.json({ messages: await publicChat() }),
+);
+app.post("/api/chat/public", async (req, res) => {
+  const who: Identity = res.locals.who;
+  requireCondition(who.user_id, 401, "登入會員才能發送訊息。");
+  const body = chatBody.parse(req.body);
+  await rateLimit(`chat:${who.user_id}`, 20, 60);
+  const result = await sendPublicChat(body.messageId, body.text, who);
+  res.json({ message: result.message });
+  if (result.isNew) void broadcastChat(result.message);
+});
 app.post("/api/rooms", async (req, res) => {
   const { gameId, isPublic } = z
     .object({
@@ -317,6 +347,24 @@ app.get("/api/rooms/watch/:code", async (req, res) => {
   );
   res.json(view);
 });
+app.get("/api/rooms/watch/:code/chat", async (req, res) => {
+  const result = await spectatorRoomChat(roomCode.parse(req.params.code));
+  res.json({ messages: result.messages });
+});
+app.post("/api/rooms/watch/:code/chat", async (req, res) => {
+  const who: Identity = res.locals.who;
+  requireCondition(who.user_id, 401, "登入會員才能發送訊息。");
+  const body = chatBody.parse(req.body);
+  await rateLimit(`chat:${who.user_id}`, 20, 60);
+  const result = await sendSpectatorRoomChat(
+    roomCode.parse(req.params.code),
+    body.messageId,
+    body.text,
+    who,
+  );
+  res.json({ message: result.message });
+  if (result.isNew) void broadcastChat(result.message);
+});
 app.get("/api/rooms/:id", async (req, res) =>
   res.json(
     await roomView(
@@ -326,6 +374,28 @@ app.get("/api/rooms/:id", async (req, res) =>
     ),
   ),
 );
+app.get("/api/rooms/:id/chat", async (req, res) =>
+  res.json({
+    messages: await playerRoomChat(
+      uuid.parse(req.params.id),
+      res.locals.who,
+    ),
+  }),
+);
+app.post("/api/rooms/:id/chat", async (req, res) => {
+  const who: Identity = res.locals.who;
+  requireCondition(who.user_id, 401, "登入會員才能發送訊息。");
+  const body = chatBody.parse(req.body);
+  await rateLimit(`chat:${who.user_id}`, 20, 60);
+  const result = await sendPlayerRoomChat(
+    uuid.parse(req.params.id),
+    body.messageId,
+    body.text,
+    who,
+  );
+  res.json({ message: result.message });
+  if (result.isNew) void broadcastChat(result.message);
+});
 const roomAction = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ready"), ready: z.boolean() }),
   z.object({ type: z.literal("start"), first: uuid.optional() }),
@@ -489,6 +559,16 @@ async function broadcastLobby() {
       .map(sendLobby),
   );
 }
+async function broadcastChat(message: ChatMessage) {
+  const frame = JSON.stringify({ type: "chatMessage", message });
+  for (const peer of peers) {
+    const receives =
+      message.channel === "public"
+        ? peer.kind === "lobby"
+        : peer.kind === "room" && peer.room === message.roomId;
+    if (receives && peer.ws.readyState === WebSocket.OPEN) peer.ws.send(frame);
+  }
+}
 function trackPeer(peer: Peer) {
   peers.add(peer);
   peer.ws.on("pong", () => {
@@ -611,6 +691,9 @@ const cleanup = setInterval(() => {
   void pool
     .query("DELETE FROM rate_limits WHERE reset_at<now()-interval '1 day'")
     .then(() => pool.query("DELETE FROM sessions WHERE expires_at<now()"))
+    .then(() =>
+      pool.query("DELETE FROM chat_messages WHERE created_at<now()-interval '30 days'"),
+    )
     .then(() =>
       pool.query(
         "DELETE FROM account_tokens WHERE expires_at<now()-interval '1 day'",

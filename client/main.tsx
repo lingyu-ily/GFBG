@@ -9,6 +9,8 @@ import type {
 import type { GameInfo } from "../shared/game";
 import { gameUis } from "./games";
 import { PlayerAvatar } from "./avatar";
+import { ChatWidget } from "./chat";
+import type { ChatChannel, ChatHistory, ChatMessage } from "../shared/chat";
 import "./style.css";
 
 interface Me {
@@ -29,6 +31,13 @@ function App() {
   const [path, setPath] = useState(location.pathname);
   const [games, setGames] = useState<GameInfo[]>([]);
   const [publicRoomList, setPublicRoomList] = useState<PublicRoomSummary[]>([]);
+  const [chatMessages, setChatMessages] = useState<
+    Record<ChatChannel, ChatMessage[]>
+  >({ public: [], room: [] });
+  const [liveChatMessage, setLiveChatMessage] = useState<{
+    nonce: string;
+    message: ChatMessage;
+  }>();
   const [room, setRoom] = useState<RoomView>();
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -60,6 +69,10 @@ function App() {
     action: RoomAction;
   }>();
   const actionLock = useRef(false);
+  const chatIds = useRef<Record<ChatChannel, Set<string>>>({
+    public: new Set(),
+    room: new Set(),
+  });
   const dialog = useRef<HTMLDialogElement>(null);
   const avatarPreview = useMemo(
     () => (avatarFile ? URL.createObjectURL(avatarFile) : ""),
@@ -93,6 +106,35 @@ function App() {
         old && old.id === value.id && old.version > value.version ? old : value,
       );
     }
+  }
+  function mergeChatHistory(channel: ChatChannel, messages: ChatMessage[]) {
+    for (const message of messages) chatIds.current[channel].add(message.id);
+    setChatMessages((old) => {
+      const merged = new Map(old[channel].map((message) => [message.id, message]));
+      for (const message of messages) merged.set(message.id, message);
+      const next = [...merged.values()]
+        .sort(
+          (a, b) =>
+            a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+        )
+        .slice(-100);
+      return { ...old, [channel]: next };
+    });
+  }
+  function receiveChatMessage(message: ChatMessage, announce = false) {
+    if (chatIds.current[message.channel].has(message.id)) return;
+    chatIds.current[message.channel].add(message.id);
+    setChatMessages((old) => ({
+      ...old,
+      [message.channel]: [...old[message.channel], message]
+        .sort(
+          (a, b) =>
+            a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+        )
+        .slice(-100),
+    }));
+    if (announce)
+      setLiveChatMessage({ nonce: crypto.randomUUID(), message });
   }
   async function run(fn: () => Promise<void>) {
     if (actionLock.current) return;
@@ -140,7 +182,7 @@ function App() {
     [avatarPreview],
   );
   useEffect(() => {
-    if (path !== "/" || !me) return;
+    if (!me) return;
     let stop = false;
     let socket: WebSocket | undefined;
     let retry: ReturnType<typeof setTimeout>;
@@ -152,10 +194,17 @@ function App() {
       );
       socket.onopen = () => {
         attempt = 0;
+        void api<ChatHistory>("/chat/public")
+          .then((value) => {
+            if (!stop) mergeChatHistory("public", value.messages);
+          })
+          .catch(() => {});
       };
       socket.onmessage = (event) => {
         const message = JSON.parse(event.data);
         if (!stop && message.type === "publicRooms") setPublicRoomList(message.rooms);
+        else if (!stop && message.type === "chatMessage")
+          receiveChatMessage(message.message, true);
       };
       socket.onclose = () => {
         if (!stop)
@@ -172,7 +221,11 @@ function App() {
       clearTimeout(retry);
       socket?.close();
     };
-  }, [path, me?.id, me?.csrf]);
+  }, [me?.id, me?.csrf]);
+  useEffect(() => {
+    chatIds.current.room.clear();
+    setChatMessages((old) => ({ ...old, room: [] }));
+  }, [roomId, watchCode]);
   useEffect(() => {
     if ((!roomId && !watchCode) || !me || (watchCode && me.name === "旅人"))
       return;
@@ -192,6 +245,14 @@ function App() {
       socket.onopen = () => {
         attempt = 0;
         setConnection("已連線");
+        const endpoint = roomId
+          ? `/rooms/${roomId}/chat`
+          : `/rooms/watch/${watchCode}/chat`;
+        void api<ChatHistory>(endpoint)
+          .then((value) => {
+            if (!stop) mergeChatHistory("room", value.messages);
+          })
+          .catch(() => {});
       };
       socket.onmessage = (event) => {
         if (stop) return;
@@ -205,7 +266,9 @@ function App() {
               : message.room,
           );
           setConnection("已連線");
-        } else if (message.type === "error") setConnection(message.error);
+        } else if (message.type === "chatMessage")
+          receiveChatMessage(message.message, true);
+        else if (message.type === "error") setConnection(message.error);
       };
       socket.onclose = (event) => {
         if (stop) return;
@@ -1015,6 +1078,19 @@ function App() {
           </>
         )}
       </main>
+      {me && (
+        <ChatWidget
+          me={me}
+          room={roomId || watchCode ? room : undefined}
+          messages={chatMessages}
+          liveMessage={liveChatMessage}
+          onMessage={(message) => receiveChatMessage(message)}
+          onLogin={() => {
+            setAuthMode("login");
+            setPanel("login");
+          }}
+        />
+      )}
     <dialog
       ref={dialog}
       className={panel === "login" && !me?.isMember ? "auth-dialog" : undefined}

@@ -2,7 +2,7 @@
 
 ## 原則
 
-單一 Node.js 實例提供靜態頁面、HTTP API 與唯讀 WebSocket。PostgreSQL 是遊戲與帳號關聯的權威資料來源，WebSocket 連線清單可隨時重建；會員頭像本體使用外部 RustFS，PostgreSQL 只保存目前物件 key。房間可承載多場完整對局；每次結算建立獨立 match 與戰績，房主可保留原座位並帶全桌回到準備大廳。
+單一 Node.js 實例提供靜態頁面、HTTP API 與唯讀 WebSocket。PostgreSQL 是遊戲、帳號與聊天紀錄的權威資料來源，WebSocket 連線清單可隨時重建；會員頭像本體使用外部 RustFS，PostgreSQL 只保存目前物件 key。房間可承載多場完整對局；每次結算建立獨立 match 與戰績，房主可保留原座位並帶全桌回到準備大廳。
 
 ## 模組邊界
 
@@ -23,6 +23,9 @@
 | 帳號 | `POST /api/profile`、`POST/DELETE /api/profile/avatar`、`POST /api/auth/change-password` |
 | 房間 | `POST /api/rooms`、`POST /api/rooms/join`、`GET /api/rooms/:id`、`POST /api/rooms/:id/actions` |
 | 戰績 | `GET /api/history`，只回傳當前帳號的最多 100 場最近對局，總數與勝率計入全部戰績 |
+| 公開聊天 | `GET/POST /api/chat/public`；所有身份可讀，只有會員可發送 |
+| 玩家房聊 | `GET/POST /api/rooms/:id/chat`；限房內玩家，只有會員可發送 |
+| 旁觀房聊 | `GET/POST /api/rooms/watch/:code/chat`；以房碼存取，只有會員可發送 |
 | 同步 | `GET /ws?room=UUID` Upgrade；session Cookie 和 Origin 驗證後只訂閱本人視角 |
 
 所有 POST 需要 `Origin === PUBLIC_URL origin` 及 `X-CSRF-Token`。`/api/me` 回傳目前 session 的 CSRF token。不要把 session cookie、Email 驗證 token 或密碼重設 token 放入 query string；信件連結使用 URL fragment，GET 不消耗 token。
@@ -43,7 +46,9 @@
 
 外層 action 支援 `ready`、`start`、`returnToLobby`、`leave`、`abort` 和 `game`。`returnToLobby` 只允許房主在完整結算後使用，會清除遊戲快照並重設全員準備狀態。回合間的 `next` 是房主操作；其他遊戲可以沿用此共用控制語意。
 
-WebSocket 消息為 `{type:"room",room:RoomView}` 或 `{type:"error",error:string}`。WebSocket 不接受遊戲寫入；HTTP 是唯一寫入通道。用版本避免舊快照覆蓋新狀態；失去廣播可再次 GET 取得完整最新視角，不依賴重放一串事件。
+WebSocket 消息為 `{type:"room",room:RoomView}`、`{type:"publicRooms",rooms:PublicRoomSummary[]}`、`{type:"chatMessage",message:ChatMessage}` 或 `{type:"error",error:string}`。WebSocket 不接受遊戲或聊天寫入；HTTP 是唯一寫入通道。用版本避免舊房間快照覆蓋新狀態；聊天以訊息 UUID 去重，失去廣播可再次 GET 最近 100 則補回。公開聊天透過全站常駐的大廳連線推播，房聊只送往對應房間的玩家及旁觀者。
+
+聊天只保存純文字。內容去除首尾空白後限制為 1–500 字且不可包含控制字元；每位會員跨頻道每分鐘最多發送 20 則。公開聊天任何訪客皆可讀，房聊由房內玩家或持正確房碼的旁觀者讀取，但發送一律需要會員身份。查詢只回傳 30 天內最近 100 則，背景清理會刪除更舊紀錄；房間刪除時一併刪除房聊。
 
 ## 一次操作的交易
 

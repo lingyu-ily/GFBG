@@ -272,6 +272,31 @@ async function wsFrame(ws: WebSocket) {
   ]);
   return JSON.parse(String(frame[0]));
 }
+async function wsFrameOfType(ws: WebSocket, type: string) {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const frame = await wsFrame(ws);
+    if (frame.type === type) return frame;
+  }
+  throw new Error(`websocket did not deliver ${type}`);
+}
+async function expectNoChatFrame(ws: WebSocket, wait = 300) {
+  await new Promise<void>((resolve, reject) => {
+    const done = () => {
+      clearTimeout(timer);
+      ws.off("message", receive);
+    };
+    const receive = (data: WebSocket.RawData) => {
+      if (JSON.parse(String(data)).type !== "chatMessage") return;
+      done();
+      reject(new Error("unexpected chat frame"));
+    };
+    const timer = setTimeout(() => {
+      done();
+      resolve();
+    }, wait);
+    ws.on("message", receive);
+  });
+}
 async function table(n: number, gameId = "love-letter") {
   const players: Browser[] = [];
   for (let i = 0; i < n; i++)
@@ -374,13 +399,13 @@ async function login(
 test("Migrations are repeatable; HTTP shell, CSRF and anonymous history permissions", async () => {
   assert.equal(
     (await sql.query("SELECT count(*) FROM schema_migrations")).rows[0].count,
-    "5",
+    "6",
   );
   await stopApp();
   await startApp();
   assert.equal(
     (await sql.query("SELECT count(*) FROM schema_migrations")).rows[0].count,
-    "5",
+    "6",
   );
   const legacy = (
     await sql.query("SELECT legacy,email,login_id FROM users WHERE id=$1", [legacyUserId])
@@ -602,6 +627,201 @@ test("Public rooms are discoverable in real time and private rooms remain watcha
   );
   lobby.close();
 });
+
+test(
+  "Chat is durable, member-only for sending, idempotent and isolated by room",
+  { timeout: 30000 },
+  async () => {
+    await sql.query("DELETE FROM rate_limits");
+    const sender = await new Browser().boot("聊天會員");
+    const watcher = await new Browser().boot("會員旁觀者");
+    const outsider = await new Browser().boot("其他房會員");
+    const guest = await new Browser().boot("訪客");
+    await register(sender, "chat-sender@example.test", "chat_sender", "聊天會員");
+    await register(watcher, "chat-watcher@example.test", "chat_watcher", "會員旁觀者");
+    await register(outsider, "chat-outsider@example.test", "chat_outsider", "其他房會員");
+
+    const publicSocket = new WebSocket(
+      url.replace("http:", "ws:") + "/ws?lobby=1",
+      { headers: { Cookie: guest.cookie, Origin: url } },
+    );
+    publicSocket.on("error", () => {});
+    await wsFrameOfType(publicSocket, "publicRooms");
+
+    const publicId = randomUUID();
+    const publicFrame = wsFrameOfType(publicSocket, "chatMessage");
+    const created = await sender.ok("/chat/public", {
+      messageId: publicId,
+      text: "  大家晚上好  ",
+    });
+    assert.equal(created.message.text, "大家晚上好");
+    assert.equal(created.message.sender.name, "聊天會員");
+    assert.equal(created.message.sender.avatarUrl, null);
+    assert.equal((await publicFrame).message.id, publicId);
+
+    const replay = await sender.ok("/chat/public", {
+      messageId: publicId,
+      text: "大家晚上好",
+    });
+    assert.equal(replay.message.id, publicId);
+    assert.equal(
+      (await sql.query("SELECT count(*) FROM chat_messages WHERE id=$1", [publicId]))
+        .rows[0].count,
+      "1",
+    );
+    assert.equal(
+      (await guest.request("/chat/public", { messageId: randomUUID(), text: "不能發送" }))
+        .status,
+      401,
+    );
+    assert.equal(
+      (await sender.request("/chat/public", { messageId: randomUUID(), text: "   " }))
+        .status,
+      400,
+    );
+    assert.equal(
+      (
+        await sender.request("/chat/public", {
+          messageId: randomUUID(),
+          text: "x".repeat(501),
+        })
+      ).status,
+      400,
+    );
+
+    const account = (
+      await sql.query<{ user_id: string }>(
+        "SELECT user_id FROM players WHERE id=$1",
+        [sender.me.id],
+      )
+    ).rows[0];
+    const recentIds = Array.from({ length: 105 }, () => randomUUID());
+    await sql.query(
+      `INSERT INTO chat_messages(
+         id,channel,room_id,sender_user_id,sender_player_id,sender_name,body,created_at
+       )
+       SELECT item.id,'public',NULL,$2,$3,'聊天會員',
+         '歷史訊息 ' || item.position,
+         now()-(106-item.position) * interval '1 minute'
+       FROM unnest($1::uuid[]) WITH ORDINALITY AS item(id,position)`,
+      [recentIds, account.user_id, sender.me.id],
+    );
+    const expiredId = randomUUID();
+    await sql.query(
+      `INSERT INTO chat_messages(
+         id,channel,room_id,sender_user_id,sender_player_id,sender_name,body,created_at
+       ) VALUES($1,'public',NULL,$2,$3,'聊天會員','過期訊息',now()-interval '31 days')`,
+      [expiredId, account.user_id, sender.me.id],
+    );
+    const history = await guest.ok("/chat/public");
+    assert.equal(history.messages.length, 100);
+    assert.ok(!history.messages.some((message: any) => message.id === expiredId));
+    assert.deepEqual(
+      history.messages.map((message: any) => message.createdAt),
+      [...history.messages]
+        .map((message: any) => message.createdAt)
+        .sort((a: string, b: string) => a.localeCompare(b)),
+    );
+
+    const { id: roomId } = await sender.ok("/rooms", {
+      gameId: "love-letter",
+      isPublic: false,
+    });
+    const room = await sender.view(roomId);
+    const { id: otherRoomId } = await outsider.ok("/rooms", {
+      gameId: "love-letter",
+      isPublic: false,
+    });
+    const playerSocket = new WebSocket(
+      url.replace("http:", "ws:") + `/ws?room=${roomId}`,
+      { headers: { Cookie: sender.cookie, Origin: url } },
+    );
+    const spectatorSocket = new WebSocket(
+      url.replace("http:", "ws:") + `/ws?mode=spectator&code=${room.code}`,
+      { headers: { Cookie: watcher.cookie, Origin: url } },
+    );
+    const otherRoomSocket = new WebSocket(
+      url.replace("http:", "ws:") + `/ws?room=${otherRoomId}`,
+      { headers: { Cookie: outsider.cookie, Origin: url } },
+    );
+    for (const socket of [playerSocket, spectatorSocket, otherRoomSocket])
+      socket.on("error", () => {});
+    await Promise.all([
+      wsFrameOfType(playerSocket, "room"),
+      wsFrameOfType(spectatorSocket, "room"),
+      wsFrameOfType(otherRoomSocket, "room"),
+    ]);
+
+    assert.equal((await outsider.request(`/rooms/${roomId}/chat`)).status, 403);
+    assert.equal((await watcher.ok(`/rooms/watch/${room.code}/chat`)).messages.length, 0);
+    assert.equal((await watcher.request("/rooms/watch/AAAAAAAA/chat")).status, 404);
+
+    const roomMessageId = randomUUID();
+    const playerReceived = wsFrameOfType(playerSocket, "chatMessage");
+    const spectatorReceived = wsFrameOfType(spectatorSocket, "chatMessage");
+    const isolated = expectNoChatFrame(otherRoomSocket);
+    await sender.ok(`/rooms/${roomId}/chat`, {
+      messageId: roomMessageId,
+      text: "只有這桌看得到",
+    });
+    assert.equal((await playerReceived).message.id, roomMessageId);
+    assert.equal((await spectatorReceived).message.id, roomMessageId);
+    await isolated;
+
+    const spectatorMessageId = randomUUID();
+    const spectatorReply = wsFrameOfType(playerSocket, "chatMessage");
+    await watcher.ok(`/rooms/watch/${room.code}/chat`, {
+      messageId: spectatorMessageId,
+      text: "旁觀者也能聊天",
+    });
+    assert.equal((await spectatorReply).message.id, spectatorMessageId);
+    assert.ok(
+      (await sender.ok(`/rooms/${roomId}/chat`)).messages.some(
+        (message: any) => message.id === spectatorMessageId,
+      ),
+    );
+
+    playerSocket.close();
+    spectatorSocket.close();
+    otherRoomSocket.close();
+    publicSocket.close();
+    await sender.command(roomId, { type: "abort" });
+    assert.equal(
+      (
+        await sender.request(`/rooms/${roomId}/chat`, {
+          messageId: randomUUID(),
+          text: "終止後不可發送",
+        })
+      ).status,
+      410,
+    );
+    await sql.query("DELETE FROM rooms WHERE id=$1", [roomId]);
+    assert.equal(
+      (await sql.query("SELECT count(*) FROM chat_messages WHERE room_id=$1", [roomId]))
+        .rows[0].count,
+      "0",
+    );
+
+    await sql.query("DELETE FROM rate_limits");
+    const limiter = await new Browser().boot("限流會員");
+    await register(limiter, "chat-limit@example.test", "chat_limit", "限流會員");
+    for (let index = 0; index < 20; index++)
+      await limiter.ok("/chat/public", {
+        messageId: randomUUID(),
+        text: `限流測試 ${index}`,
+      });
+    assert.equal(
+      (
+        await limiter.request("/chat/public", {
+          messageId: randomUUID(),
+          text: "第 21 則",
+        })
+      ).status,
+      429,
+    );
+    await sql.query("DELETE FROM rate_limits");
+  },
+);
 
 test("Spectator views for every game hide private state and never take a seat", async () => {
   await sql.query("DELETE FROM rate_limits");
