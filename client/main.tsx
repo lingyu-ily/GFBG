@@ -26,6 +26,376 @@ interface Me {
   avatarUrl: string | null;
   rooms: { id: string; code: string; game_id: string; status: string }[];
 }
+
+interface HistoryMatch {
+  match_id: string;
+  score: number;
+  won: boolean;
+  game_id: string;
+  finished_at: string;
+}
+
+interface HistoryResponse {
+  matches: HistoryMatch[];
+  summary: { played: number; won: number };
+}
+
+interface AccountPageProps {
+  me: Me;
+  games: GameInfo[];
+  busy: boolean;
+  run: (fn: () => Promise<void>) => Promise<void>;
+  refreshMe: () => Promise<Me>;
+  navigate: (to: string) => void;
+  setError: (message: string) => void;
+  setNotice: (message: string) => void;
+}
+
+function AccountPage({
+  me,
+  games,
+  busy,
+  run,
+  refreshMe,
+  navigate,
+  setError,
+  setNotice,
+}: AccountPageProps) {
+  const [tab, setTab] = useState<"settings" | "history">("settings");
+  const [displayName, setDisplayName] = useState(me.name);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newPasswordConfirm, setNewPasswordConfirm] = useState("");
+  const [avatarFile, setAvatarFile] = useState<File>();
+  const [history, setHistory] = useState<HistoryResponse>();
+  const [historyError, setHistoryError] = useState("");
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const avatarPreview = useMemo(
+    () => (avatarFile ? URL.createObjectURL(avatarFile) : ""),
+    [avatarFile],
+  );
+
+  useEffect(() => setDisplayName(me.name), [me.name]);
+  useEffect(() => {
+    let active = true;
+    setHistoryLoading(true);
+    setHistoryError("");
+    void api<HistoryResponse>("/history")
+      .then((value) => {
+        if (active) setHistory(value);
+      })
+      .catch((e) => {
+        if (active) setHistoryError((e as Error).message);
+      })
+      .finally(() => {
+        if (active) setHistoryLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [me.id]);
+  useEffect(
+    () => () => {
+      if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+    },
+    [avatarPreview],
+  );
+
+  return (
+    <section className="account-page">
+      <header className="account-page-header">
+        <button className="text-button" onClick={() => navigate("/")}>
+          ← 返回大廳
+        </button>
+        <span className="eyebrow">YOUR PLACE AT THE TABLE</span>
+        <h1>我的帳號</h1>
+        <p>管理你在牌桌上的身分，也回顧每一場完整對局。</p>
+      </header>
+
+      <div className="account-tabs" role="tablist" aria-label="帳號頁面">
+        <button
+          id="account-settings-tab"
+          type="button"
+          role="tab"
+          aria-selected={tab === "settings"}
+          aria-controls="account-settings-panel"
+          className={tab === "settings" ? "active" : "text-button"}
+          onClick={() => setTab("settings")}
+        >
+          帳號設定
+        </button>
+        <button
+          id="account-history-tab"
+          type="button"
+          role="tab"
+          aria-selected={tab === "history"}
+          aria-controls="account-history-panel"
+          className={tab === "history" ? "active" : "text-button"}
+          onClick={() => setTab("history")}
+        >
+          戰績
+        </button>
+      </div>
+
+      {tab === "settings" ? (
+        <div
+          id="account-settings-panel"
+          className="account-content panel"
+          role="tabpanel"
+          aria-labelledby="account-settings-tab"
+        >
+          <div className="avatar-profile">
+            <PlayerAvatar
+              name={me.name}
+              src={avatarPreview || me.avatarUrl}
+              className="profile-avatar"
+            />
+            <div>
+              <strong>{me.name}</strong>
+              <p>@{me.loginId} · {me.email}</p>
+              <small className={me.emailVerified ? "verified" : "muted"}>
+                {me.emailVerified ? "Email 已驗證" : "Email 尚未驗證"}
+              </small>
+            </div>
+          </div>
+
+          {!me.emailVerified && (
+            <div className="account-section">
+              <h2>Email 驗證</h2>
+              <p className="muted">驗證信箱後，忘記密碼時才能安全重設。</p>
+              <button
+                className="outline"
+                disabled={busy || !me.mailEnabled}
+                onClick={() =>
+                  void run(async () => {
+                    const result = await api<{ verificationSent: boolean }>(
+                      "/auth/resend-verification",
+                      {},
+                      me.csrf,
+                    );
+                    setNotice(
+                      result.verificationSent
+                        ? "驗證信已寄出，請在 24 小時內開啟連結。"
+                        : "驗證信目前無法寄送，帳號仍可正常使用。",
+                    );
+                  })
+                }
+              >
+                {me.mailEnabled ? "重新寄送驗證信" : "驗證信服務尚未設定"}
+              </button>
+            </div>
+          )}
+
+          <form
+            className="account-section"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void run(async () => {
+                if (!displayName.trim()) throw new Error("顯示名稱不可空白。");
+                await api("/profile", { name: displayName.trim() }, me.csrf);
+                await refreshMe();
+                setNotice("顯示名稱已更新；進行中的對局會保留開局名稱。");
+              });
+            }}
+          >
+            <h2>顯示名稱</h2>
+            <label htmlFor="account-display-name">朋友在牌桌上看到的名稱</label>
+            <input
+              id="account-display-name"
+              autoComplete="nickname"
+              maxLength={24}
+              required
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+            />
+            <button
+              className="outline"
+              disabled={busy || displayName.trim() === me.name}
+            >
+              儲存顯示名稱
+            </button>
+          </form>
+
+          <form
+            className="account-section"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void run(async () => {
+                if (newPassword !== newPasswordConfirm)
+                  throw new Error("兩次輸入的新密碼不一致。");
+                await api(
+                  "/auth/change-password",
+                  { currentPassword, newPassword },
+                  me.csrf,
+                );
+                setCurrentPassword("");
+                setNewPassword("");
+                setNewPasswordConfirm("");
+                await refreshMe();
+                setNotice("密碼已更新，其他裝置已登出。");
+              });
+            }}
+          >
+            <h2>登入密碼</h2>
+            <label htmlFor="current-password">目前密碼</label>
+            <input id="current-password" type="password" autoComplete="current-password" required value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
+            <label htmlFor="new-password">新密碼</label>
+            <input id="new-password" type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+            <label htmlFor="new-password-confirm">再次輸入新密碼</label>
+            <input id="new-password-confirm" type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={newPasswordConfirm} onChange={(event) => setNewPasswordConfirm(event.target.value)} />
+            <button className="outline" disabled={busy}>更新密碼</button>
+          </form>
+
+          <div className="avatar-picker">
+            <h2>會員頭像</h2>
+            <label htmlFor="avatar-file">選擇新頭像</label>
+            <input
+              id="avatar-file"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              disabled={busy || !me.avatarEnabled}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (!file) return setAvatarFile(undefined);
+                if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+                  setAvatarFile(undefined);
+                  setError("只支援 JPEG、PNG 或 WebP 圖片。");
+                  event.target.value = "";
+                  return;
+                }
+                if (file.size > 5 * 1024 * 1024) {
+                  setAvatarFile(undefined);
+                  setError("圖片不可超過 5 MiB。");
+                  event.target.value = "";
+                  return;
+                }
+                setError("");
+                setAvatarFile(file);
+              }}
+            />
+            <small className="muted">
+              自動置中裁成正方形，支援 JPEG、PNG、WebP，最多 5 MiB。
+            </small>
+            {!me.avatarEnabled && <p className="muted">頭像儲存服務尚未設定。</p>}
+            <div className="avatar-actions">
+              <button
+                disabled={busy || !avatarFile || !me.avatarEnabled}
+                onClick={() =>
+                  void run(async () => {
+                    await uploadAvatar(avatarFile!, me.csrf);
+                    setAvatarFile(undefined);
+                    await refreshMe();
+                    setNotice("頭像已更新。");
+                  })
+                }
+              >
+                儲存頭像
+              </button>
+              {me.avatarUrl && (
+                <button
+                  className="text-button danger"
+                  disabled={busy || !me.avatarEnabled}
+                  onClick={() =>
+                    void run(async () => {
+                      await deleteAvatar(me.csrf);
+                      setAvatarFile(undefined);
+                      await refreshMe();
+                      setNotice("頭像已移除。");
+                    })
+                  }
+                >
+                  移除頭像
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="account-section account-session">
+            <div>
+              <h2>登入狀態</h2>
+              <p className="muted">完整對局會自動保存到你的戰績。</p>
+            </div>
+            <button
+              className="outline"
+              disabled={busy}
+              onClick={() =>
+                void run(async () => {
+                  await api("/auth/logout", {}, me.csrf);
+                  await refreshMe();
+                  navigate("/");
+                })
+              }
+            >
+              登出
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div
+          id="account-history-panel"
+          className="account-content panel"
+          role="tabpanel"
+          aria-labelledby="account-history-tab"
+        >
+          <span className="eyebrow">YOUR GAME JOURNAL</span>
+          <h2>每一局，都算數。</h2>
+          {historyLoading ? (
+            <p className="account-history-state" role="status">正在載入戰績…</p>
+          ) : historyError ? (
+            <div className="account-history-state" role="alert">
+              <strong>戰績目前無法載入。</strong>
+              <p>{historyError}</p>
+              <button onClick={() => location.reload()}>重新載入</button>
+            </div>
+          ) : history ? (
+            <>
+              <div className="history-summary">
+                <div>
+                  <strong>{history.summary.played}</strong>
+                  <span>完成對局</span>
+                </div>
+                <div>
+                  <strong>{history.summary.won}</strong>
+                  <span>獲勝</span>
+                </div>
+                <div>
+                  <strong>
+                    {history.summary.played
+                      ? Math.round((history.summary.won / history.summary.played) * 100)
+                      : 0}
+                    %
+                  </strong>
+                  <span>勝率</span>
+                </div>
+              </div>
+              {history.matches.length ? (
+                <div className="history-list">
+                  {history.matches.map((match) => (
+                    <div key={match.match_id}>
+                      <span>
+                        {games.find((game) => game.id === match.game_id)?.name || match.game_id}
+                        <small>{new Date(match.finished_at).toLocaleDateString("zh-TW")}</small>
+                      </span>
+                      <strong>{gameUis[match.game_id]?.score(match.score) || match.score}</strong>
+                      {gameUis[match.game_id]?.showHistoryStatus && (
+                        <span className={match.won ? "ready-label" : "muted"}>
+                          {match.won ? "獲勝" : "完成"}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="account-history-state">還沒有完整對局。找幾位朋友，開第一桌吧。</p>
+              )}
+            </>
+          ) : null}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function App() {
   const [me, setMe] = useState<Me>();
   const [path, setPath] = useState(location.pathname);
@@ -47,17 +417,14 @@ function App() {
   const [code, setCode] = useState(
     new URLSearchParams(location.search).get("join") || "",
   );
-  const [panel, setPanel] = useState<"login" | "history" | null>(null);
+  const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register" | "forgot">("login");
   const [loginId, setLoginId] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
-  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newPasswordConfirm, setNewPasswordConfirm] = useState("");
-  const [avatarFile, setAvatarFile] = useState<File>();
-  const [history, setHistory] = useState<any>();
   const [first, setFirst] = useState("");
   const [createPublic, setCreatePublic] = useState(false);
   const [token] = useState(
@@ -74,10 +441,6 @@ function App() {
     room: new Set(),
   });
   const dialog = useRef<HTMLDialogElement>(null);
-  const avatarPreview = useMemo(
-    () => (avatarFile ? URL.createObjectURL(avatarFile) : ""),
-    [avatarFile],
-  );
   const roomId = path.match(/^\/rooms\/([a-f0-9-]+)$/)?.[1];
   const watchCode = path.match(/^\/watch\/([A-HJ-NP-Z2-9]{8})$/)?.[1];
   function navigate(to: string) {
@@ -169,18 +532,11 @@ function App() {
       window.history.replaceState({}, "", path);
   }, [token]);
   useEffect(() => {
-    if (panel && !dialog.current?.open) dialog.current?.showModal();
-    else if (!panel) {
+    if (authOpen && !dialog.current?.open) dialog.current?.showModal();
+    else if (!authOpen) {
       dialog.current?.close();
-      setAvatarFile(undefined);
     }
-  }, [panel]);
-  useEffect(
-    () => () => {
-      if (avatarPreview) URL.revokeObjectURL(avatarPreview);
-    },
-    [avatarPreview],
-  );
+  }, [authOpen]);
   useEffect(() => {
     if (!me) return;
     let stop = false;
@@ -382,32 +738,19 @@ function App() {
         <nav>
           <span className="nav-note">把朋友，聚在一桌。</span>
           {me?.isMember ? (
-            <>
-              <button
-                className="text-button"
-                onClick={() =>
-                  void run(async () => {
-                    setHistory(await api("/history"));
-                    setPanel("history");
-                  })
-                }
-              >
-                我的戰績
-              </button>
-              <button
-                className="avatar-button"
-                onClick={() => setPanel("login")}
-                aria-label={`開啟 ${me.name} 的帳號設定`}
-              >
-                <PlayerAvatar name={me.name} src={me.avatarUrl} />
-              </button>
-            </>
+            <button
+              className="avatar-button"
+              onClick={() => navigate("/account")}
+              aria-label={`開啟 ${me.name} 的帳號頁面`}
+            >
+              <PlayerAvatar name={me.name} src={me.avatarUrl} />
+            </button>
           ) : (
             <button
               className="outline small"
               onClick={() => {
                 setAuthMode("login");
-                setPanel("login");
+                setAuthOpen(true);
               }}
             >
               登入／註冊 <span aria-hidden="true">↗</span>
@@ -485,7 +828,7 @@ function App() {
                   await refreshMe();
                   navigate("/");
                   setAuthMode("login");
-                  setPanel("login");
+                  setAuthOpen(true);
                   setNotice("密碼已重設，請使用新密碼登入。");
                 });
               }}
@@ -498,6 +841,28 @@ function App() {
             </form>
             {!token && <p>連結已移除或遺失，請重新申請重設密碼。</p>}
           </section>
+        ) : path === "/account" ? (
+          me.isMember ? (
+            <AccountPage
+              me={me}
+              games={games}
+              busy={busy}
+              run={run}
+              refreshMe={refreshMe}
+              navigate={navigate}
+              setError={setError}
+              setNotice={setNotice}
+            />
+          ) : (
+            <section className="empty-state panel account-guest">
+              <span className="eyebrow">MEMBERS ONLY</span>
+              <h1>登入後才能查看帳號</h1>
+              <p>帳號設定與完整對局戰績只會顯示給你。</p>
+              <button className="outline" onClick={() => navigate("/")}>
+                ← 返回大廳
+              </button>
+            </section>
+          )
         ) : path === "/games" ? (
           <>
             <section className="games-page-header">
@@ -1087,200 +1452,30 @@ function App() {
           onMessage={(message) => receiveChatMessage(message)}
           onLogin={() => {
             setAuthMode("login");
-            setPanel("login");
+            setAuthOpen(true);
           }}
         />
       )}
     <dialog
       ref={dialog}
-      className={panel === "login" && !me?.isMember ? "auth-dialog" : undefined}
-      aria-label={
-        panel === "history" ? "我的戰績" : me?.isMember ? "我的帳號" : "登入或註冊"
-      }
-        onCancel={() => setPanel(null)}
+      className="auth-dialog"
+      aria-label="登入或註冊"
+        onCancel={() => setAuthOpen(false)}
         onClick={(e) => {
-          if (e.target === dialog.current) setPanel(null);
+          if (e.target === dialog.current) setAuthOpen(false);
         }}
       >
         <div className="dialog-inner">
           <button
             className="close-dialog"
             aria-label="關閉"
-            onClick={() => setPanel(null)}
+            onClick={() => setAuthOpen(false)}
           >
             ×
           </button>
-          {panel === "login" ? (
-            <>
-              <span className="eyebrow">MAKE IT YOUR TABLE</span>
-              <h2>{me?.isMember ? "你的帳號" : "留住每一場精彩。"}</h2>
-              {me?.isMember ? (
-                <>
-                  <div className="avatar-profile">
-                    <PlayerAvatar
-                      name={me.name}
-                      src={avatarPreview || me.avatarUrl}
-                      className="profile-avatar"
-                    />
-                    <div>
-                      <strong>{me.name}</strong>
-                      <p>@{me.loginId} · {me.email}</p>
-                      <small className={me.emailVerified ? "verified" : "muted"}>
-                        {me.emailVerified ? "Email 已驗證" : "Email 尚未驗證"}
-                      </small>
-                    </div>
-                  </div>
-                  {!me.emailVerified && (
-                    <button
-                      className="outline wide"
-                      disabled={busy || !me.mailEnabled}
-                      onClick={() =>
-                        void run(async () => {
-                          const result = await api<{ verificationSent: boolean }>(
-                            "/auth/resend-verification",
-                            {},
-                            me.csrf,
-                          );
-                          setNotice(
-                            result.verificationSent
-                              ? "驗證信已寄出，請在 24 小時內開啟連結。"
-                              : "驗證信目前無法寄送，帳號仍可正常使用。",
-                          );
-                        })
-                      }
-                    >
-                      {me.mailEnabled ? "重新寄送驗證信" : "驗證信服務尚未設定"}
-                    </button>
-                  )}
-                  <form
-                    className="account-section"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void run(async () => {
-                        if (!name.trim()) throw new Error("顯示名稱不可空白。");
-                        await api("/profile", { name: name.trim() }, me.csrf);
-                        await refreshMe();
-                        setNotice("顯示名稱已更新；進行中的對局會保留開局名稱。");
-                      });
-                    }}
-                  >
-                    <label htmlFor="account-display-name">顯示名稱</label>
-                    <input id="account-display-name" autoComplete="nickname" maxLength={24} required value={name} onChange={(event) => setName(event.target.value)} />
-                    <button className="outline" disabled={busy || name.trim() === me.name}>儲存顯示名稱</button>
-                  </form>
-                  <form
-                    className="account-section"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void run(async () => {
-                        if (newPassword !== newPasswordConfirm)
-                          throw new Error("兩次輸入的新密碼不一致。");
-                        await api(
-                          "/auth/change-password",
-                          { currentPassword, newPassword },
-                          me.csrf,
-                        );
-                        setCurrentPassword("");
-                        setNewPassword("");
-                        setNewPasswordConfirm("");
-                        await refreshMe();
-                        setNotice("密碼已更新，其他裝置已登出。");
-                      });
-                    }}
-                  >
-                    <label htmlFor="current-password">目前密碼</label>
-                    <input id="current-password" type="password" autoComplete="current-password" required value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
-                    <label htmlFor="new-password">新密碼</label>
-                    <input id="new-password" type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
-                    <label htmlFor="new-password-confirm">再次輸入新密碼</label>
-                    <input id="new-password-confirm" type="password" autoComplete="new-password" minLength={8} maxLength={128} required value={newPasswordConfirm} onChange={(event) => setNewPasswordConfirm(event.target.value)} />
-                    <button className="outline" disabled={busy}>更新密碼</button>
-                  </form>
-                  <div className="avatar-picker">
-                    <label htmlFor="avatar-file">會員頭像</label>
-                    <input
-                      id="avatar-file"
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      disabled={busy || !me.avatarEnabled}
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (!file) return setAvatarFile(undefined);
-                        if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
-                          setAvatarFile(undefined);
-                          setError("只支援 JPEG、PNG 或 WebP 圖片。");
-                          event.target.value = "";
-                          return;
-                        }
-                        if (file.size > 5 * 1024 * 1024) {
-                          setAvatarFile(undefined);
-                          setError("圖片不可超過 5 MiB。");
-                          event.target.value = "";
-                          return;
-                        }
-                        setError("");
-                        setAvatarFile(file);
-                      }}
-                    />
-                    <small className="muted">
-                      自動置中裁成正方形，支援 JPEG、PNG、WebP，最多 5 MiB。
-                    </small>
-                    {error && <p className="inline-error" role="alert">{error}</p>}
-                    {!me.avatarEnabled && (
-                      <p className="muted">頭像儲存服務尚未設定。</p>
-                    )}
-                    <div className="avatar-actions">
-                      <button
-                        disabled={busy || !avatarFile || !me.avatarEnabled}
-                        onClick={() =>
-                          void run(async () => {
-                            await uploadAvatar(avatarFile!, me.csrf);
-                            setAvatarFile(undefined);
-                            await refreshMe();
-                            setPanel(null);
-                            setNotice("頭像已更新。");
-                          })
-                        }
-                      >
-                        儲存頭像
-                      </button>
-                      {me.avatarUrl && (
-                        <button
-                          className="text-button danger"
-                          disabled={busy || !me.avatarEnabled}
-                          onClick={() =>
-                            void run(async () => {
-                              await deleteAvatar(me.csrf);
-                              setAvatarFile(undefined);
-                              await refreshMe();
-                              setPanel(null);
-                              setNotice("頭像已移除。");
-                            })
-                          }
-                        >
-                          移除頭像
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <p className="muted">完整對局會自動保存到你的戰績。</p>
-                  <button
-                    className="outline"
-                    disabled={busy}
-                    onClick={() =>
-                      void run(async () => {
-                        await api("/auth/logout", {}, me.csrf);
-                        await refreshMe();
-                        setPanel(null);
-                        navigate("/");
-                      })
-                    }
-                  >
-                    登出
-                  </button>
-                </>
-              ) : (
-                <>
+          <span className="eyebrow">MAKE IT YOUR TABLE</span>
+          <h2>留住每一場精彩。</h2>
+          <>
                   <div className="auth-tabs" role="tablist" aria-label="帳號操作">
                     <button type="button" className={authMode === "login" ? "active" : "text-button"} onClick={() => setAuthMode("login")}>登入</button>
                     <button type="button" className={authMode === "register" ? "active" : "text-button"} onClick={() => setAuthMode("register")}>註冊</button>
@@ -1294,7 +1489,7 @@ function App() {
                           await api("/auth/login", { loginId, password }, me!.csrf);
                           setPassword("");
                           await refreshMe();
-                          setPanel(null);
+                          setAuthOpen(false);
                           setNotice("登入成功，進行中的座位已保留。");
                         });
                       }}
@@ -1323,7 +1518,7 @@ function App() {
                           setPassword("");
                           setPasswordConfirm("");
                           await refreshMe();
-                          setPanel(null);
+                          setAuthOpen(false);
                           setNotice(
                             result.verificationSent
                               ? "註冊完成，驗證信已寄出。"
@@ -1364,7 +1559,7 @@ function App() {
                         event.preventDefault();
                         void run(async () => {
                           await api("/auth/forgot-password", { email }, me!.csrf);
-                          setPanel(null);
+                          setAuthOpen(false);
                           setNotice("若此 Email 綁定已驗證帳號，重設信會在幾分鐘內寄出。");
                         });
                       }}
@@ -1376,59 +1571,9 @@ function App() {
                       <button type="button" className="text-button wide" onClick={() => setAuthMode("login")}>返回登入</button>
                     </form>
                   )}
-                </>
-              )}
-            </>
-          ) : panel === "history" && history ? (
-            <>
-              <span className="eyebrow">YOUR GAME JOURNAL</span>
-              <h2>每一局，都算數。</h2>
-              <div className="history-summary">
-                <div>
-                  <strong>{history.summary.played}</strong>
-                  <span>完成對局</span>
-                </div>
-                <div>
-                  <strong>{history.summary.won}</strong>
-                  <span>獲勝</span>
-                </div>
-                <div>
-                  <strong>
-                    {history.summary.played
-                      ? Math.round(
-                          (history.summary.won / history.summary.played) * 100,
-                        )
-                      : 0}
-                    %
-                  </strong>
-                  <span>勝率</span>
-                </div>
-              </div>
-              {history.matches.length ? (
-                <div className="history-list">
-                  {history.matches.map((m: any) => (
-                    <div key={m.match_id}>
-                      <span>
-                        {games.find((g) => g.id === m.game_id)?.name || m.game_id}{" "}
-                        <small>
-                          {new Date(m.finished_at).toLocaleDateString("zh-TW")}
-                        </small>
-                      </span>
-                      <strong>{gameUis[m.game_id]?.score(m.score) || m.score}</strong>
-                      {gameUis[m.game_id]?.showHistoryStatus && (
-                        <span className={m.won ? "ready-label" : "muted"}>
-                          {m.won ? "獲勝" : "完成"}
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p>還沒有完整對局。找幾位朋友，開第一桌吧。</p>
-              )}
-            </>
-          ) : null}
-          {error && panel && (
+
+          </>
+          {error && authOpen && (
             <p role="alert" className="inline-error">
               {error}
             </p>

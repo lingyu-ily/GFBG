@@ -1280,9 +1280,55 @@ dialog.auth-dialog {
   font-size: 0.75rem;
   line-height: 1.35;
 }
+.account-page {
+  width: min(100%, 820px);
+  margin: 0 auto;
+  padding: 52px 0 72px;
+}
+.account-page-header > .text-button {
+  margin-bottom: 30px;
+}
+.account-page-header h1 {
+  margin: 12px 0 16px;
+  font-size: clamp(2.8rem, 5vw, 4.5rem);
+}
+.account-page-header p {
+  max-width: 620px;
+  margin-bottom: 28px;
+}
+.account-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #111a26;
+}
+.account-tabs button {
+  min-height: 46px;
+  margin: 0;
+  padding: 10px 18px;
+}
+.account-tabs .active {
+  background: var(--accent);
+  color: #101923;
+}
+.account-content {
+  padding: 34px;
+}
+.account-content > .avatar-profile:first-child {
+  margin-top: 0;
+}
 .account-section {
-  padding: 18px 0;
+  padding: 26px 0;
   border-top: 1px solid var(--line);
+}
+.account-section h2,
+.avatar-picker h2 {
+  margin-bottom: 6px;
+  font-size: 1.2rem;
 }
 .account-section button {
   margin-top: 12px;
@@ -1303,7 +1349,7 @@ dialog.auth-dialog {
   font-size: 1.8rem;
 }
 .avatar-picker {
-  padding: 18px 0;
+  padding: 26px 0;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
@@ -1319,6 +1365,32 @@ dialog.auth-dialog {
   margin-top: 16px;
 }
 .avatar-actions .text-button { margin: 0; }
+.account-session {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  border-top: 0;
+  padding-bottom: 0;
+}
+.account-session p {
+  margin-bottom: 0;
+}
+.account-session button {
+  flex-shrink: 0;
+  margin-top: 0;
+}
+.account-guest {
+  max-width: 700px;
+  margin: 60px auto;
+}
+.account-history-state {
+  padding: 36px 0 12px;
+  text-align: center;
+}
+.account-history-state p {
+  margin: 8px 0 18px;
+}
 .close-dialog {
   position: absolute;
   top: 9px;
@@ -1329,15 +1401,19 @@ dialog.auth-dialog {
   font-size: 1.5rem;
 }
 .history-summary {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   margin: 24px 0;
-  gap: 20px;
+  gap: 12px;
 }
 .history-summary > div {
   display: flex;
   flex-direction: column;
   gap: 7px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #111a26;
 }
 .history-summary strong {
   font-size: 2rem;
@@ -1348,8 +1424,7 @@ dialog.auth-dialog {
   color: var(--muted);
 }
 .history-list {
-  max-height: 320px;
-  overflow: auto;
+  margin-top: 28px;
 }
 .history-list > div {
   display: flex;
@@ -1725,6 +1800,15 @@ dialog.auth-dialog {
   .dialog-inner {
     padding: 30px 24px;
   }
+  .account-page {
+    padding: 38px 0 56px;
+  }
+  .account-page-header > .text-button {
+    margin-bottom: 24px;
+  }
+  .account-content {
+    padding: 26px;
+  }
   .hero-foot {
     gap: 12px;
     font-size: 0.75rem;
@@ -1743,6 +1827,28 @@ dialog.auth-dialog {
   .auth-field-grid {
     grid-template-columns: 1fr;
     gap: 0;
+  }
+  .history-summary {
+    grid-template-columns: 1fr;
+  }
+  .history-summary > div {
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+  .history-list > div {
+    flex-wrap: wrap;
+    gap: 10px 16px;
+  }
+  .history-list > div > span:first-child {
+    flex: 1 1 100%;
+  }
+  .account-session {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .account-session button {
+    width: 100%;
   }
   .rematch-panel {
     align-items: stretch;
@@ -1798,6 +1904,24 @@ dialog.auth-dialog {
   }
   .topbar {
     padding: 0 16px;
+  }
+  .account-page {
+    padding-top: 28px;
+  }
+  .account-page-header h1 {
+    font-size: 3rem;
+  }
+  .account-content {
+    padding: 22px;
+  }
+  .account-tabs button {
+    padding-inline: 10px;
+  }
+  .avatar-profile {
+    align-items: flex-start;
+  }
+  .avatar-profile p {
+    overflow-wrap: anywhere;
   }
   .brand {
     font-size: 1.3rem;
