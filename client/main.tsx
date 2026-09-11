@@ -1,9 +1,10 @@
-import React, { useEffect, useRef, useState, type FormEvent } from "react";
+import React, { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
-import { api, ApiError } from "./api";
+import { api, ApiError, deleteAvatar, uploadAvatar } from "./api";
 import type { RoomView, RoomAction } from "../shared/room";
 import type { GameInfo } from "../shared/game";
 import { gameUis } from "./games";
+import { PlayerAvatar } from "./avatar";
 import "./style.css";
 
 interface Me {
@@ -12,6 +13,8 @@ interface Me {
   email: string | null;
   csrf: string;
   emailEnabled: boolean;
+  avatarEnabled: boolean;
+  avatarUrl: string | null;
   rooms: { id: string; code: string; game_id: string; status: string }[];
 }
 function App() {
@@ -29,6 +32,7 @@ function App() {
   );
   const [panel, setPanel] = useState<"login" | "history" | null>(null);
   const [email, setEmail] = useState("");
+  const [avatarFile, setAvatarFile] = useState<File>();
   const [history, setHistory] = useState<any>();
   const [first, setFirst] = useState("");
   const [token] = useState(
@@ -41,6 +45,10 @@ function App() {
   }>();
   const actionLock = useRef(false);
   const dialog = useRef<HTMLDialogElement>(null);
+  const avatarPreview = useMemo(
+    () => (avatarFile ? URL.createObjectURL(avatarFile) : ""),
+    [avatarFile],
+  );
   const roomId = path.match(/^\/rooms\/([a-f0-9-]+)$/)?.[1];
   function navigate(to: string) {
     window.history.pushState({}, "", to);
@@ -97,8 +105,17 @@ function App() {
   }, [token]);
   useEffect(() => {
     if (panel && !dialog.current?.open) dialog.current?.showModal();
-    else if (!panel) dialog.current?.close();
+    else if (!panel) {
+      dialog.current?.close();
+      setAvatarFile(undefined);
+    }
   }, [panel]);
+  useEffect(
+    () => () => {
+      if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+    },
+    [avatarPreview],
+  );
   useEffect(() => {
     if (!roomId || !me) return;
     let stop = false;
@@ -231,8 +248,9 @@ function App() {
               <button
                 className="avatar-button"
                 onClick={() => setPanel("login")}
+                aria-label={`開啟 ${me.name} 的帳號設定`}
               >
-                {me.name.slice(0, 1)}
+                <PlayerAvatar name={me.name} src={me.avatarUrl} />
               </button>
             </>
           ) : (
@@ -569,9 +587,7 @@ function App() {
                     {room.members.map((m, i) => (
                       <div className="waiting-seat" key={m.id}>
                         <span className="seat-number">0{i + 1}</span>
-                        <span className="player-avatar">
-                          {m.name.slice(0, 1)}
-                        </span>
+                        <PlayerAvatar name={m.name} src={m.avatarUrl} />
                         <div>
                           <strong>
                             {m.name}
@@ -722,7 +738,9 @@ function App() {
       </main>
     <dialog
       ref={dialog}
-      aria-label={panel === "history" ? "我的戰績" : "Email 登入"}
+      aria-label={
+        panel === "history" ? "我的戰績" : me?.email ? "我的帳號" : "Email 登入"
+      }
         onCancel={() => setPanel(null)}
         onClick={(e) => {
           if (e.target === dialog.current) setPanel(null);
@@ -742,7 +760,84 @@ function App() {
               <h2>{me?.email ? "你的帳號" : "留住每一場精彩。"}</h2>
               {me?.email ? (
                 <>
-                  <p>{me.email}</p>
+                  <div className="avatar-profile">
+                    <PlayerAvatar
+                      name={me.name}
+                      src={avatarPreview || me.avatarUrl}
+                      className="profile-avatar"
+                    />
+                    <div>
+                      <strong>{me.name}</strong>
+                      <p>{me.email}</p>
+                    </div>
+                  </div>
+                  <div className="avatar-picker">
+                    <label htmlFor="avatar-file">會員頭像</label>
+                    <input
+                      id="avatar-file"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      disabled={busy || !me.avatarEnabled}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (!file) return setAvatarFile(undefined);
+                        if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+                          setAvatarFile(undefined);
+                          setError("只支援 JPEG、PNG 或 WebP 圖片。");
+                          event.target.value = "";
+                          return;
+                        }
+                        if (file.size > 5 * 1024 * 1024) {
+                          setAvatarFile(undefined);
+                          setError("圖片不可超過 5 MiB。");
+                          event.target.value = "";
+                          return;
+                        }
+                        setError("");
+                        setAvatarFile(file);
+                      }}
+                    />
+                    <small className="muted">
+                      自動置中裁成正方形，支援 JPEG、PNG、WebP，最多 5 MiB。
+                    </small>
+                    {error && <p className="inline-error" role="alert">{error}</p>}
+                    {!me.avatarEnabled && (
+                      <p className="muted">頭像儲存服務尚未設定。</p>
+                    )}
+                    <div className="avatar-actions">
+                      <button
+                        disabled={busy || !avatarFile || !me.avatarEnabled}
+                        onClick={() =>
+                          void run(async () => {
+                            await uploadAvatar(avatarFile!, me.csrf);
+                            setAvatarFile(undefined);
+                            await refreshMe();
+                            setPanel(null);
+                            setNotice("頭像已更新。");
+                          })
+                        }
+                      >
+                        儲存頭像
+                      </button>
+                      {me.avatarUrl && (
+                        <button
+                          className="text-button danger"
+                          disabled={busy || !me.avatarEnabled}
+                          onClick={() =>
+                            void run(async () => {
+                              await deleteAvatar(me.csrf);
+                              setAvatarFile(undefined);
+                              await refreshMe();
+                              setPanel(null);
+                              setNotice("頭像已移除。");
+                            })
+                          }
+                        >
+                          移除頭像
+                        </button>
+                      )}
+                    </div>
+                  </div>
                   <p className="muted">完整對局會自動保存到你的戰績。</p>
                   <button
                     className="outline"

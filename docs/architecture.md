@@ -2,7 +2,7 @@
 
 ## 原則
 
-單一 Node.js 實例提供靜態頁面、HTTP API 與唯讀 WebSocket。PostgreSQL 是唯一權威資料來源，WebSocket 連線清單可隨時重建。房間可承載多場完整對局；每次結算建立獨立 match 與戰績，房主可保留原座位並帶全桌回到準備大廳。
+單一 Node.js 實例提供靜態頁面、HTTP API 與唯讀 WebSocket。PostgreSQL 是遊戲與帳號關聯的權威資料來源，WebSocket 連線清單可隨時重建；會員頭像本體使用外部 RustFS，PostgreSQL 只保存目前物件 key。房間可承載多場完整對局；每次結算建立獨立 match 與戰績，房主可保留原座位並帶全桌回到準備大廳。
 
 ## 模組邊界
 
@@ -19,12 +19,14 @@
 | 類別 | 介面 |
 | --- | --- |
 | 啟動 | `GET /api/health`、`GET /api/me`、`GET /api/games` |
-| 身份 | `POST /api/profile`、`POST /api/auth/request`、`POST /api/auth/confirm`、`POST /api/auth/logout` |
+| 身份 | `POST /api/profile`、`POST/DELETE /api/profile/avatar`、`POST /api/auth/request`、`POST /api/auth/confirm`、`POST /api/auth/logout` |
 | 房間 | `POST /api/rooms`、`POST /api/rooms/join`、`GET /api/rooms/:id`、`POST /api/rooms/:id/actions` |
 | 戰績 | `GET /api/history`，只回傳當前帳號的最多 100 場最近對局，總數與勝率計入全部戰績 |
 | 同步 | `GET /ws?room=UUID` Upgrade；session Cookie 和 Origin 驗證後只訂閱本人視角 |
 
 所有 POST 需要 `Origin === PUBLIC_URL origin` 及 `X-CSRF-Token`。`/api/me` 回傳目前 session 的 CSRF token。不要把 session cookie 或 Email 登入 token 放入 query string。
+
+會員頭像上傳使用原始 JPEG、PNG 或 WebP body，經後端限制大小、解碼、置中裁切及轉成 256×256 WebP 後，才以 UUID key 寫入 RustFS。RustFS Bucket 對外只公開 `avatars/*` 的讀取；寫入憑證只存在伺服器環境。換圖先寫新物件、再切換資料庫 key，最後刪除舊物件，避免失敗時留下失效頭像。
 
 房間操作格式：
 

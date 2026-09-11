@@ -1,5 +1,6 @@
 import type { RoomAction, RoomView } from "../shared/room";
 import { cardById, type SHView } from "../shared/shadow-hunters";
+import { PlayerAvatar } from "./avatar";
 
 const faction = (value?: string) =>
   value === "hunter" ? "獵人" : value === "shadow" ? "暗影" : value === "neutral" ? "中立" : "身分未明";
@@ -40,7 +41,7 @@ export function ShadowHuntersTable({ room, me, busy, onAction }: {
                   <p>{area.text}</p>
                   <div className="shadow-tokens">
                     {game.players.filter((p) => p.alive && p.location === area.id).map((p) => (
-                      <span title={p.name} key={p.id}>{p.name.slice(0, 1)}</span>
+                      <PlayerAvatar name={p.name} src={room.members.find((m) => m.id === p.id)?.avatarUrl} title={p.name} key={p.id} />
                     ))}
                   </div>
                 </article>
@@ -60,7 +61,7 @@ export function ShadowHuntersTable({ room, me, busy, onAction }: {
           {game.players.map((p) => (
             <article className={`shadow-player ${!p.alive ? "dead" : ""} ${p.id === game.current ? "current" : ""}`} key={p.id}>
               <div className="shadow-player-head">
-                <strong>{p.name}{p.id === me ? "（你）" : ""}</strong>
+                <div className="shadow-player-identity"><PlayerAvatar name={p.name} src={room.members.find((m) => m.id === p.id)?.avatarUrl} /><strong>{p.name}{p.id === me ? "（你）" : ""}</strong></div>
                 <span>{p.alive ? `${p.damage} 傷害` : "已死亡"}</span>
               </div>
               <small>{p.character ? `${p.character.name} · ${faction(p.faction)} · ${p.maxHp} HP` : faction()}</small>

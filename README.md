@@ -1,6 +1,6 @@
 # 古楓桌遊 GFBG
 
-繁體中文私人桌遊平台，收錄新版《情書》、《暗影獵人》與《暗影奇襲：女王陛下的飛行船》。手機／電腦共用牌桌，訪客可直接入房，Email 登入保存完整對局戰績。
+繁體中文私人桌遊平台，收錄新版《情書》、《暗影獵人》與《暗影奇襲：女王陛下的飛行船》。手機／電腦共用牌桌，訪客可直接入房，Email 登入保存完整對局戰績並可設定會員頭像。
 
 **部署方式：一個 Node.js 應用程式容器，連接你現有的 PostgreSQL、SMTP 與 HTTPS 反向代理。** 不需要 MariaDB、Redis、Sites 或 Supabase。
 
@@ -64,9 +64,14 @@ GRANT USAGE, CREATE ON SCHEMA public TO tablefolk;
 | `DATABASE_URL` | `postgresql://tablefolk:密碼@資料庫主機:5432/tablefolk`；密碼特殊字元須 URL 編碼 |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` | 587 搭配 false（強制 STARTTLS）；465 搭配 true |
 | `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` | 現有寄信服務的帳密與核准寄件者 |
+| `AVATAR_S3_ENDPOINT` / `AVATAR_S3_REGION` | RustFS S3 API（通常為內網 `http://rustfs:9000`）與區域（預設 `us-east-1`） |
+| `AVATAR_S3_BUCKET` / `AVATAR_S3_ACCESS_KEY_ID` / `AVATAR_S3_SECRET_ACCESS_KEY` | 預先建立的專用 Bucket 與 GFBG service account |
+| `AVATAR_PUBLIC_BASE_URL` | 公開 HTTPS Bucket 路徑，例如 `https://assets.example.com/gfbg-avatars` |
 | `TRUST_PROXY_HOPS` | 實際代理層數；一般一層填 1，直連開發填 0 |
 
-`.env` 限制為管理者可讀，勿加入 Git。`HOST_PORT` 預設 3000，可調整為未占用埠。正式環境必須是 HTTPS，登入連結使用固定的 PUBLIC_URL 產生。未提供 SMTP 主機或寄件者時訪客功能仍正常，登入按鈕會說明尚未設定。
+`.env` 限制為管理者可讀，勿加入 Git。`HOST_PORT` 預設 3000，可調整為未占用埠。正式環境必須是 HTTPS，登入連結使用固定的 PUBLIC_URL 產生。未提供 SMTP 主機或寄件者時訪客功能仍正常。六項頭像設定全空時停用頭像上傳；只填部分會拒絕啟動並列出缺少項目。
+
+在 RustFS 預先建立 `gfbg-avatars` Bucket。Bucket Policy 只對外允許 `s3:GetObject` 到 `arn:aws:s3:::gfbg-avatars/avatars/*`，不要公開列出 Bucket。另建立 GFBG 專用 service account：Bucket 層只給啟動檢查需要的 `s3:ListBucket`，物件層只給 `avatars/*` 的 `s3:PutObject` 與 `s3:DeleteObject`。應用程式不使用 RustFS root credentials，也不會自動建立 Bucket。
 
 ### 3. 建置、遷移、啟動
 
@@ -78,7 +83,7 @@ docker compose run --rm --no-deps tabletop node dist/server/migrate.js
 docker compose up -d
 ```
 
-Compose 只啟動應用程式，不建立 PostgreSQL 容器。應用程式的正式資料都在 PostgreSQL，不需要應用程式資料卷。採非 root、唯讀檔案系統與受限暫存目錄；保留啟動與錯誤碼日誌，不記錄秘密手牌、驗證 token 或帳密。
+Compose 只啟動應用程式，不建立 PostgreSQL 或 RustFS。帳號保存 RustFS 物件 key，圖片本體在 RustFS，因此不需要應用程式資料卷。採非 root、唯讀檔案系統與受限暫存目錄；保留啟動與錯誤碼日誌，不記錄秘密手牌、驗證 token 或帳密。
 
 **使用 Unraid WebUI 管理的替代方式：** 先依 GHCR 部署指南登入、拉取映像並執行一次性遷移，再把 `deploy/unraid-template.xml` 放到 `/boot/config/plugins/dockerMan/templates-user/my-tablefolk.xml`，從 Docker → Add Container 選擇模板，填入連線設定，將 WebUI 改為實際網域。啟動後打開 Auto-Start。不要同時用 Compose 和 WebUI 啟動同名服務。
 
@@ -92,7 +97,7 @@ Compose 只啟動應用程式，不建立 PostgreSQL 容器。應用程式的正
 2. 手機與電腦各以不同身份加入同房，準備後開始。
 3. 出牌同步且各自只看得到自己的手牌；重新整理仍在原座位。
 4. Email 收信後於提出要求的同一瀏覽器按「確認登入」，保留座位；完成對局後查看戰績。
-5. 重啟應用程式容器，確認未完成對局與帳號可恢復。
+5. 登入會員上傳頭像，確認等待室與三款遊戲同步顯示；換圖、移除與重啟後狀態正確。
 
 未填入你的實際連線設定、完成這組實機驗收前，不能視為已上線。
 
@@ -117,7 +122,7 @@ npm run test:integration
 npm audit --omit=dev
 ```
 
-規則測試涵蓋《情書》10 種角色與 21 張牌、《暗影獵人》20 名角色與三副各 16 張牌，以及飛行船版 30 名角色、七個地點、三副各 20 張牌、隱藏資訊和 4／6／8／9／10 人完整模擬。整合測試使用獨立的真實 PostgreSQL 與本機 SMTP 接收器，執行 HTTP／WebSocket 客戶端、三款遊戲的完整對局、登入、交易競爭及故障恢復；不寄送外部郵件，不使用正式環境 DATABASE_URL。
+規則測試涵蓋《情書》10 種角色與 21 張牌、《暗影獵人》20 名角色與三副各 16 張牌，以及飛行船版 30 名角色、七個地點、三副各 20 張牌、隱藏資訊和 4／6／8／9／10 人完整模擬。整合測試使用獨立的真實 PostgreSQL、本機 SMTP 接收器與假 S3 HTTP 服務，執行 HTTP／WebSocket 客戶端、三款遊戲的完整對局、登入、會員頭像、交易競爭及故障恢復；不寄送外部郵件，不連接正式 PostgreSQL 或 RustFS。
 
 測試 PostgreSQL 資料留在 `.local/test-pg-*` 供失敗排查，測試結束即停止。這些自動測試不能替代實際 Unraid 的 HTTPS、SMTP 和手機驗收。
 

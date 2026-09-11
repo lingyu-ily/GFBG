@@ -5,6 +5,7 @@ import { getGame } from "./games/registry.js";
 import { requireCondition } from "./errors.js";
 import type { Identity } from "./auth.js";
 import type { RoomCommand, RoomView } from "../shared/room.js";
+import { publicAvatarUrl } from "./avatars.js";
 interface Room {
   id: string;
   code: string;
@@ -105,7 +106,7 @@ async function viewWith(
   } = await db.query<Room>("SELECT * FROM rooms WHERE id=$1", [id]);
   requireCondition(room, 404, "房間不存在。");
   const members = await db.query(
-    "SELECT p.id,p.name,m.ready,m.position,(m.last_seen>now()-interval '45 seconds') AS online FROM members m JOIN players p ON p.id=m.player_id WHERE m.room_id=$1 ORDER BY m.position",
+    "SELECT p.id,p.name,m.ready,m.position,(m.last_seen>now()-interval '45 seconds') AS online,u.avatar_key FROM members m JOIN players p ON p.id=m.player_id LEFT JOIN users u ON u.id=p.user_id WHERE m.room_id=$1 ORDER BY m.position",
     [id],
   );
   requireCondition(
@@ -120,7 +121,10 @@ async function viewWith(
     hostId: room.host_id,
     status: room.status,
     version: room.version,
-    members: members.rows,
+    members: members.rows.map(({ avatar_key, ...member }) => ({
+      ...member,
+      avatarUrl: publicAvatarUrl(avatar_key),
+    })),
     game: room.state ? getGame(room.game_id).playerView(room.state, who) : null,
   };
 }

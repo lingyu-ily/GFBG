@@ -4,6 +4,7 @@ import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createServer } from "node:net";
+import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import { once } from "node:events";
@@ -11,6 +12,7 @@ import EmbeddedPostgres from "embedded-postgres";
 import pg from "pg";
 import { SMTPServer } from "smtp-server";
 import { WebSocket } from "ws";
+import sharp from "sharp";
 import type { RoomView, RoomAction } from "../../shared/room.js";
 import type { LLView } from "../../shared/love-letter.js";
 import type { SHView } from "../../shared/shadow-hunters.js";
@@ -22,6 +24,10 @@ let server: ChildProcess;
 let url: string;
 let env: NodeJS.ProcessEnv;
 let smtp: SMTPServer;
+let objectServer: HttpServer;
+let objectUrl: string;
+const objects = new Map<string, { body: Buffer; contentType: string; cacheControl: string }>();
+let failObjectWrites = false;
 const emails: string[] = [];
 let failMail = false;
 let serverLog = "";
@@ -64,6 +70,7 @@ before(
     const pgPort = await port();
     const httpPort = await port();
     const smtpPort = await port();
+    const objectPort = await port();
     const password = randomBytes(24).toString("hex");
     db = new EmbeddedPostgres({
       databaseDir: resolve(".local", `test-pg-${randomUUID()}`),
@@ -95,6 +102,48 @@ before(
       },
     });
     await new Promise<void>((r) => smtp.listen(smtpPort, "127.0.0.1", r));
+    objectUrl = `http://127.0.0.1:${objectPort}`;
+    objectServer = createHttpServer((req, res) => {
+      const path = new URL(req.url || "/", objectUrl).pathname;
+      if (req.method === "HEAD" && ["/gfbg-avatars", "/gfbg-avatars/"].includes(path)) {
+        res.writeHead(200).end();
+        return;
+      }
+      if (req.method === "PUT" && path.startsWith("/gfbg-avatars/avatars/")) {
+        if (failObjectWrites) {
+          res.writeHead(503, { "Content-Type": "application/xml" });
+          res.end("<Error><Code>ServiceUnavailable</Code></Error>");
+          return;
+        }
+        const chunks: Buffer[] = [];
+        req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        req.on("end", () => {
+          objects.set(path, {
+            body: Buffer.concat(chunks),
+            contentType: String(req.headers["content-type"] || ""),
+            cacheControl: String(req.headers["cache-control"] || ""),
+          });
+          res.writeHead(200, { ETag: '"test-etag"' }).end();
+        });
+        return;
+      }
+      if (req.method === "DELETE" && path.startsWith("/gfbg-avatars/avatars/")) {
+        objects.delete(path);
+        res.writeHead(204).end();
+        return;
+      }
+      if (req.method === "GET" && objects.has(path)) {
+        const object = objects.get(path)!;
+        res.writeHead(200, {
+          "Content-Type": object.contentType,
+          "Cache-Control": object.cacheControl,
+        });
+        res.end(object.body);
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    await new Promise<void>((resolve) => objectServer.listen(objectPort, "127.0.0.1", resolve));
     url = `http://127.0.0.1:${httpPort}`;
     env = {
       ...process.env,
@@ -110,6 +159,12 @@ before(
       SMTP_FROM: "tablefolk@example.test",
       SMTP_USER: "",
       SMTP_PASSWORD: "",
+      AVATAR_S3_ENDPOINT: objectUrl,
+      AVATAR_S3_REGION: "us-east-1",
+      AVATAR_S3_BUCKET: "gfbg-avatars",
+      AVATAR_S3_ACCESS_KEY_ID: "TESTACCESSKEY",
+      AVATAR_S3_SECRET_ACCESS_KEY: "test-secret-access-key",
+      AVATAR_PUBLIC_BASE_URL: `${objectUrl}/gfbg-avatars`,
     };
     await startApp();
   },
@@ -118,6 +173,7 @@ before(
 after(async () => {
   await stopApp();
   if (smtp) await new Promise<void>((r) => smtp.close(r));
+  if (objectServer) await new Promise<void>((r) => objectServer.close(() => r()));
   if (sql) await sql.end();
   if (db) await db.stop();
 });
@@ -153,6 +209,24 @@ class Browser {
     const r = await this.request(path, body);
     assert.equal(r.status, 200, `${path}: ${JSON.stringify(r.data)}`);
     return r.data;
+  }
+  async raw(
+    path: string,
+    method: "POST" | "DELETE",
+    body?: Buffer,
+    contentType?: string,
+  ) {
+    const response = await fetch(url + "/api" + path, {
+      method,
+      headers: {
+        Cookie: this.cookie,
+        Origin: url,
+        "X-CSRF-Token": this.me?.csrf || "",
+        ...(contentType ? { "Content-Type": contentType } : {}),
+      },
+      body: body ? new Uint8Array(body) : undefined,
+    });
+    return { status: response.status, data: await response.json() };
   }
   async boot(name = "旅人") {
     this.me = await this.ok("/me");
@@ -253,13 +327,13 @@ async function login(b: Browser, email: string) {
 test("Migrations are repeatable; HTTP shell, CSRF and anonymous history permissions", async () => {
   assert.equal(
     (await sql.query("SELECT count(*) FROM schema_migrations")).rows[0].count,
-    "2",
+    "3",
   );
   await stopApp();
   await startApp();
   assert.equal(
     (await sql.query("SELECT count(*) FROM schema_migrations")).rows[0].count,
-    "2",
+    "3",
   );
   const shell = await fetch(url);
   assert.equal(shell.status, 200);
@@ -285,6 +359,101 @@ test("Migrations are repeatable; HTTP shell, CSRF and anonymous history permissi
       .status,
     403,
   );
+});
+test("Member avatars use RustFS-compatible storage, update rooms and safely fall back", async () => {
+  await sql.query("DELETE FROM rate_limits");
+  const t = await table(2);
+  const member = t.players[0];
+  const guest = t.players[1];
+  const png = await sharp({
+    create: {
+      width: 480,
+      height: 320,
+      channels: 3,
+      background: { r: 142, g: 64, b: 88 },
+    },
+  })
+    .png()
+    .toBuffer();
+
+  assert.equal(
+    (await guest.raw("/profile/avatar", "POST", png, "image/png")).status,
+    401,
+  );
+  await login(member, "avatar@example.test");
+  assert.equal(member.me.avatarEnabled, true);
+  assert.equal(member.me.avatarUrl, null);
+
+  const ws = new WebSocket(url.replace("http:", "ws:") + `/ws?room=${t.id}`, {
+    headers: { Cookie: guest.cookie, Origin: url },
+  });
+  await once(ws, "message");
+  const updated = once(ws, "message");
+  const upload = await member.raw("/profile/avatar", "POST", png, "image/png");
+  assert.equal(upload.status, 200, JSON.stringify(upload.data));
+  assert.match(
+    upload.data.avatarUrl,
+    new RegExp(`^${objectUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/gfbg-avatars/avatars/[0-9a-f-]+\\.webp$`),
+  );
+  const message = JSON.parse(String((await updated)[0]));
+  assert.equal(
+    message.room.members.find((item: any) => item.id === member.me.id).avatarUrl,
+    upload.data.avatarUrl,
+  );
+  ws.close();
+
+  member.me = await member.ok("/me");
+  assert.equal(member.me.avatarUrl, upload.data.avatarUrl);
+  assert.equal((await member.view(t.id)).members[0].avatarUrl, upload.data.avatarUrl);
+  const objectPath = new URL(upload.data.avatarUrl).pathname;
+  const stored = objects.get(objectPath)!;
+  assert.ok(stored);
+  assert.equal(stored.contentType, "image/webp");
+  assert.equal(stored.cacheControl, "public, max-age=31536000, immutable");
+  const metadata = await sharp(stored.body).metadata();
+  assert.deepEqual(
+    { format: metadata.format, width: metadata.width, height: metadata.height, pages: metadata.pages || 1 },
+    { format: "webp", width: 256, height: 256, pages: 1 },
+  );
+
+  const corrupt = await member.raw(
+    "/profile/avatar",
+    "POST",
+    Buffer.from("not an image"),
+    "image/png",
+  );
+  assert.equal(corrupt.status, 400);
+  assert.equal((await member.ok("/me")).avatarUrl, upload.data.avatarUrl);
+  assert.equal(
+    (await member.raw("/profile/avatar", "POST", Buffer.alloc(5 * 1024 * 1024 + 1), "image/png")).status,
+    413,
+  );
+
+  failObjectWrites = true;
+  try {
+    assert.equal(
+      (await member.raw("/profile/avatar", "POST", png, "image/png")).status,
+      503,
+    );
+  } finally {
+    failObjectWrites = false;
+  }
+  assert.equal((await member.ok("/me")).avatarUrl, upload.data.avatarUrl);
+
+  const replacement = await member.raw("/profile/avatar", "POST", png, "image/png");
+  assert.equal(replacement.status, 200);
+  assert.notEqual(replacement.data.avatarUrl, upload.data.avatarUrl);
+  assert.equal(objects.has(objectPath), false);
+
+  await sql.query("DELETE FROM rate_limits");
+  const otherBrowser = await new Browser().boot("另一台");
+  await login(otherBrowser, "avatar@example.test");
+  assert.equal(otherBrowser.me.avatarUrl, replacement.data.avatarUrl);
+
+  const replacementPath = new URL(replacement.data.avatarUrl).pathname;
+  assert.equal((await member.raw("/profile/avatar", "DELETE")).status, 200);
+  assert.equal((await member.ok("/me")).avatarUrl, null);
+  assert.equal(objects.has(replacementPath), false);
 });
 test("Rooms require membership; race joins cap at six; start requires ready; seats lock on start", async () => {
   const t = await table(2);

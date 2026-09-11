@@ -29,9 +29,19 @@ import {
   transferHosts,
 } from "./rooms.js";
 import { games } from "./games/registry.js";
+import {
+  avatarRoomIds,
+  publicAvatarUrl,
+  removeAvatar,
+  saveAvatar,
+  verifyAvatarStore,
+} from "./avatars.js";
 
 const app = express();
 app.disable("x-powered-by");
+const avatarImageOrigin = config.avatar
+  ? ` ${new URL(config.avatar.publicBaseUrl).origin}`
+  : "";
 const proxy = Number(process.env.TRUST_PROXY_HOPS || 0);
 if (proxy > 0) app.set("trust proxy", proxy);
 app.use((_req, res, next) => {
@@ -40,7 +50,7 @@ app.use((_req, res, next) => {
     "Referrer-Policy": "no-referrer",
     "X-Frame-Options": "DENY",
     "Content-Security-Policy":
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+      `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:${avatarImageOrigin}; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`,
   });
   next();
 });
@@ -67,6 +77,8 @@ app.get("/api/me", async (req, res) => {
     id: who.player_id,
     name: who.name,
     email: who.email,
+    avatarUrl: publicAvatarUrl(who.avatar_key),
+    avatarEnabled: !!config.avatar,
     csrf: who.csrf,
     rooms: rooms.rows,
     emailEnabled: !!(config.smtp.host && config.smtp.from),
@@ -104,6 +116,37 @@ app.post("/api/profile", async (req, res) => {
     res.locals.who.player_id,
   ]);
   res.json({ ok: true });
+});
+const avatarBody = express.raw({
+  type: ["image/jpeg", "image/png", "image/webp"],
+  limit: "5mb",
+});
+app.post("/api/profile/avatar", avatarBody, async (req, res) => {
+  const who: Identity = res.locals.who;
+  requireCondition(who.user_id, 401, "登入會員才能設定頭像。");
+  requireCondition(
+    Buffer.isBuffer(req.body),
+    415,
+    "只支援 JPEG、PNG 或 WebP 圖片。",
+  );
+  await rateLimit(`avatar:${who.user_id}`, 10, 3600);
+  const avatarUrl = await saveAvatar(
+    who.user_id,
+    req.body,
+    req.headers["content-type"]?.split(";", 1)[0].toLowerCase() || "",
+  );
+  const roomIds = await avatarRoomIds(who.user_id);
+  res.json({ ok: true, avatarUrl });
+  void Promise.allSettled(roomIds.map(broadcast));
+});
+app.delete("/api/profile/avatar", async (_req, res) => {
+  const who: Identity = res.locals.who;
+  requireCondition(who.user_id, 401, "登入會員才能設定頭像。");
+  await rateLimit(`avatar:${who.user_id}`, 10, 3600);
+  await removeAvatar(who.user_id);
+  const roomIds = await avatarRoomIds(who.user_id);
+  res.json({ ok: true, avatarUrl: null });
+  void Promise.allSettled(roomIds.map(broadcast));
 });
 app.post("/api/auth/request", async (req, res) => {
   const { email } = z
@@ -218,6 +261,10 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   }
   if (err instanceof SyntaxError) {
     res.status(400).json({ error: "無效的請求格式。" });
+    return;
+  }
+  if ((err as { type?: string })?.type === "entity.too.large") {
+    res.status(413).json({ error: "圖片不可超過 5 MiB。" });
     return;
   }
   if (err instanceof Error && err.message === "SMTP_SEND_FAILED") {
@@ -364,6 +411,7 @@ process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
 if (process.env.AUTO_MIGRATE === "true") await migrate();
 await pool.query("SELECT 1 FROM schema_migrations LIMIT 1");
+await verifyAvatarStore();
 server.listen(config.port, "0.0.0.0", () =>
   console.info(`古楓桌遊 GFBG 服務啟動：http://localhost:${config.port}`),
 );

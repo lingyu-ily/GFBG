@@ -7,7 +7,7 @@
   <Privileged>false</Privileged>
   <Support/>
   <Project/>
-  <Overview>古楓桌遊 GFBG：新版情書 2–6 人、私人房間、Email 登入。先依 GitHub Actions 部署指南登入 GHCR、拉取映像並執行遷移。連接既有 PostgreSQL 與 SMTP。</Overview>
+  <Overview>古楓桌遊 GFBG：新版情書 2–6 人、私人房間、Email 登入與 RustFS 會員頭像。先依 GitHub Actions 部署指南登入 GHCR、拉取映像並執行遷移。連接既有 PostgreSQL、SMTP 與選用的 RustFS。</Overview>
   <Category>GameServers:</Category>
   <WebUI>https://games.example.com</WebUI>
   <ExtraParams>--init --read-only --tmpfs /tmp:size=16m,mode=1777 --security-opt no-new-privileges:true --cap-drop ALL</ExtraParams>
@@ -20,6 +20,12 @@
   <Config Name="SMTP User" Target="SMTP_USER" Default="" Mode="" Description="SMTP 帳號" Type="Variable" Display="always" Required="false" Mask="false"/>
   <Config Name="SMTP Password" Target="SMTP_PASSWORD" Default="" Mode="" Description="SMTP 密碼" Type="Variable" Display="always" Required="false" Mask="true"/>
   <Config Name="SMTP From" Target="SMTP_FROM" Default="" Mode="" Description="已驗證的寄件者，例如 games@example.com" Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="Avatar S3 Endpoint" Target="AVATAR_S3_ENDPOINT" Default="" Mode="" Description="RustFS S3 API，例如 http://rustfs:9000；六項頭像設定須全填或全空。" Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="Avatar S3 Region" Target="AVATAR_S3_REGION" Default="" Mode="" Description="RustFS S3 region，通常為 us-east-1；六項頭像設定全空時停用。" Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="Avatar S3 Bucket" Target="AVATAR_S3_BUCKET" Default="" Mode="" Description="預先建立且公開 avatars/* 讀取的專用 Bucket" Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="Avatar S3 Access Key" Target="AVATAR_S3_ACCESS_KEY_ID" Default="" Mode="" Description="GFBG 專用最小權限 service account" Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="Avatar S3 Secret Key" Target="AVATAR_S3_SECRET_ACCESS_KEY" Default="" Mode="" Description="GFBG 專用 service account secret" Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="Avatar Public Base URL" Target="AVATAR_PUBLIC_BASE_URL" Default="" Mode="" Description="公開 HTTPS Bucket 路徑，例如 https://assets.example.com/gfbg-avatars" Type="Variable" Display="always" Required="false" Mask="false"/>
   <Config Name="Trusted proxy hops" Target="TRUST_PROXY_HOPS" Default="1" Mode="" Description="實際代理層數，主機埠只允許可信代理存取。" Type="Variable" Display="advanced" Required="true" Mask="false">1</Config>
   <Config Name="Auto migrate" Target="AUTO_MIGRATE" Default="false" Mode="" Description="正式環境手動備份並執行遷移後再啟動。" Type="Variable" Display="advanced" Required="true" Mask="false">false</Config>
 </Container>

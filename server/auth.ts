@@ -15,6 +15,7 @@ export interface Identity {
   name: string;
   user_id: string | null;
   email: string | null;
+  avatar_key: string | null;
 }
 export function sessionCookie(req: Pick<Request, "headers">) {
   const raw = req.headers.cookie
@@ -32,7 +33,7 @@ export async function identity(
   return (
     (
       await pool.query(
-        "SELECT s.token_hash,s.player_id,s.csrf,p.name,p.user_id,u.email FROM sessions s JOIN players p ON p.id=s.player_id LEFT JOIN users u ON u.id=p.user_id WHERE s.token_hash=$1 AND s.expires_at>now()",
+        "SELECT s.token_hash,s.player_id,s.csrf,p.name,p.user_id,u.email,u.avatar_key FROM sessions s JOIN players p ON p.id=s.player_id LEFT JOIN users u ON u.id=p.user_id WHERE s.token_hash=$1 AND s.expires_at>now()",
         [key],
       )
     ).rows[0] || null
@@ -73,6 +74,7 @@ export async function ensureIdentity(req: Request, res: Response) {
     name: "旅人",
     user_id: null,
     email: null,
+    avatar_key: null,
   };
 }
 export async function rateLimit(key: string, max: number, seconds: number) {

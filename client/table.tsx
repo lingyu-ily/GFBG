@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ROLES, type Card, type LLView } from "../shared/love-letter";
 import type { RoomAction, RoomView } from "../shared/room";
+import { PlayerAvatar } from "./avatar";
 function PlayingCard({
   card,
   selected,
@@ -95,7 +96,10 @@ export function LoveLetterTable({
                 key={p.id}
               >
                 <div className="opponent-head">
-                  <span className="player-avatar">{p.name.slice(0, 1)}</span>
+                  <PlayerAvatar
+                    name={p.name}
+                    src={room.members.find((m) => m.id === p.id)?.avatarUrl}
+                  />
                   <div>
                     <strong>{p.name}</strong>
                     <small>

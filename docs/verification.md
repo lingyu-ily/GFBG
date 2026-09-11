@@ -1,5 +1,12 @@
 # 驗收紀錄
 
+## 2026-09-11 RustFS 會員頭像增量驗收
+
+- `npm run build`：TypeScript、Vite 前端、含 Sharp 與 AWS S3 SDK 的伺服器 bundle 通過。
+- `npm run test:integration`：15 個整合測試通過、1 個未設定 `PG_BIN` 的備份測試跳過。
+- 本機假 S3 實際接收 path-style PUT／DELETE；已驗證 256×256 WebP、不可變快取、失敗回復、換圖清理、跨瀏覽器與 WebSocket 更新。
+- 尚待以實際 RustFS Bucket、公開 HTTPS 網址及手機瀏覽器完成部署驗收。
+
 ## 2026-09-11 同房續局增量驗收
 
 - `npm test`：36 個規則測試通過。

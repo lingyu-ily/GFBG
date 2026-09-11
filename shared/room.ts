@@ -4,6 +4,7 @@ export interface Member {
   ready: boolean;
   online: boolean;
   position: number;
+  avatarUrl: string | null;
 }
 export interface RoomView<GameView = unknown> {
   id: string;

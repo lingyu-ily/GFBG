@@ -1,5 +1,6 @@
 import type { RoomAction, RoomView } from "../shared/room";
 import { srCardById, type SRView } from "../shared/shadow-raiders";
+import { PlayerAvatar } from "./avatar";
 
 const faction = (value?: string) => value === "raider" ? "奇襲者" : value === "shadow" ? "暗影" : value === "citizen" ? "市民" : "身分未明";
 
@@ -23,12 +24,12 @@ export function ShadowRaidersTable({ room, me, busy, onAction }: {
         <div className="raiders-map" aria-label="飛行船環狀地圖">
           <article className="raiders-airship">
             <span>10 · 全域射程</span><h3>{airship.name}</h3><p>{airship.text}</p>
-            <div className="shadow-tokens">{game.players.filter((p) => p.alive && p.location === airship.id).map((p) => <span title={p.name} key={p.id}>{p.name.slice(0, 1)}</span>)}</div>
+            <div className="shadow-tokens">{game.players.filter((p) => p.alive && p.location === airship.id).map((p) => <PlayerAvatar name={p.name} src={room.members.find((m) => m.id === p.id)?.avatarUrl} title={p.name} key={p.id} />)}</div>
           </article>
           {outer.map((area, index) => (
             <article className={`shadow-area raiders-area area-${index}`} key={area.id}>
               <span>{area.rolls.join(" / ")} · ← 攻擊左鄰</span><h3>{area.name}</h3><p>{area.text}</p>
-              <div className="shadow-tokens">{game.players.filter((p) => p.alive && p.location === area.id).map((p) => <span title={p.name} key={p.id}>{p.name.slice(0, 1)}</span>)}</div>
+              <div className="shadow-tokens">{game.players.filter((p) => p.alive && p.location === area.id).map((p) => <PlayerAvatar name={p.name} src={room.members.find((m) => m.id === p.id)?.avatarUrl} title={p.name} key={p.id} />)}</div>
             </article>
           ))}
         </div>
@@ -37,7 +38,7 @@ export function ShadowRaidersTable({ room, me, busy, onAction }: {
         </div>
         <div className="shadow-players raiders-players">
           {game.players.map((p) => <article className={`shadow-player ${!p.alive ? "dead" : ""} ${p.id === game.current ? "current" : ""}`} key={p.id}>
-            <div className="shadow-player-head"><strong>{p.name}{p.id === me ? "（你）" : ""}</strong><span>{p.alive ? `${p.damage} 傷害` : "已死亡"}</span></div>
+            <div className="shadow-player-head"><div className="shadow-player-identity"><PlayerAvatar name={p.name} src={room.members.find((m) => m.id === p.id)?.avatarUrl} /><strong>{p.name}{p.id === me ? "（你）" : ""}</strong></div><span>{p.alive ? `${p.damage} 傷害` : "已死亡"}</span></div>
             <small>{p.character ? `${p.character.name} · ${faction(p.faction)} · ${p.maxHp} HP` : faction()}</small>
             <small>{p.location ? game.areas.find((a) => a.id === p.location)?.name : "位置未定"}{p.equipment.filter((e) => e.card === "death-scope").length ? ` · 射程 +${p.equipment.filter((e) => e.card === "death-scope").length}` : ""}</small>
             <div className="shadow-equipment">{p.equipment.length ? p.equipment.map((e) => <span title={srCardById(e.card).text} key={e.id}>{srCardById(e.card).title}</span>) : <i>沒有裝備</i>}</div>
