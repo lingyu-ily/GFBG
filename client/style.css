@@ -66,6 +66,7 @@
 }
 body {
   margin: 0;
+  overflow-x: clip;
 }
 button,
 input,
@@ -244,11 +245,30 @@ main {
   line-height: 1.7;
 }
 .hero {
+  position: relative;
+  isolation: isolate;
   display: grid;
   grid-template-columns: 1.2fr 1fr;
   gap: 60px;
   align-items: center;
   padding: 72px 0 62px;
+}
+.hero::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 0;
+  bottom: 0;
+  left: calc(50% - 50vw);
+  right: calc(50% - 50vw);
+  background:
+    linear-gradient(
+      90deg,
+      rgb(16 24 35 / 92%) 0%,
+      rgb(16 24 35 / 78%) 48%,
+      rgb(16 24 35 / 70%) 100%
+    ),
+    url("/boardgame-bg.png") center / cover no-repeat;
 }
 .hero h1 {
   margin: 24px 0;
