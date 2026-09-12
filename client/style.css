@@ -584,8 +584,9 @@ main {
   color: var(--accent);
   white-space: nowrap;
 }
-footer {
+.site-footer {
   display: flex;
+  align-items: flex-end;
   justify-content: space-between;
   gap: 20px;
   padding: 36px 0;
@@ -594,8 +595,15 @@ footer {
   font-size: 0.75rem;
   color: #94a0ae;
 }
-footer > span:first-child {
+.site-footer > div {
+  display: grid;
+  gap: 7px;
+}
+.site-footer-brand {
   letter-spacing: 0.15em;
+}
+.site-footer-copyright {
+  color: #788594;
 }
 .message {
   padding: 14px 18px;
@@ -1773,7 +1781,8 @@ dialog.auth-dialog {
   .room-bottom button {
     font-size: 0.75rem;
   }
-  footer {
+  .site-footer {
+    align-items: flex-start;
     flex-direction: column;
     padding: 24px 0;
     gap: 10px;

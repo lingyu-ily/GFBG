@@ -396,6 +396,22 @@ function AccountPage({
   );
 }
 
+function SiteFooter() {
+  const currentYear = new Date().getFullYear();
+
+  return (
+    <footer className="site-footer">
+      <div>
+        <span className="site-footer-brand">古楓桌遊 GFBG</span>
+        <span className="site-footer-copyright">
+          © {currentYear} 古楓桌遊 GFBG。保留所有權利。
+        </span>
+      </div>
+      <span>一點運氣，一點默契。剩下的，交給朋友。</span>
+    </footer>
+  );
+}
+
 function App() {
   const [me, setMe] = useState<Me>();
   const [path, setPath] = useState(location.pathname);
@@ -985,10 +1001,6 @@ function App() {
                 })}
               </div>
             </section>
-            <footer>
-              <span>古楓桌遊 GFBG</span>
-              <span>一點運氣，一點默契。剩下的，交給朋友。</span>
-            </footer>
           </>
         ) : !roomId && !watchCode ? (
           <>
@@ -1146,10 +1158,6 @@ function App() {
                 </div>
               </section>
             )}
-            <footer>
-              <span>古楓桌遊 GFBG</span>
-              <span>一點運氣，一點默契。剩下的，交給朋友。</span>
-            </footer>
           </>
         ) : watchCode && me.name === "旅人" ? (
           <section className="empty-state panel spectator-name-gate">
@@ -1447,6 +1455,7 @@ function App() {
             </div>
           </>
         )}
+        <SiteFooter />
       </main>
       {me && (
         <ChatWidget
