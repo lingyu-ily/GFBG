@@ -295,6 +295,9 @@ main {
 .join-panel form {
   margin-top: 26px;
 }
+.join-panel > form:first-child {
+  margin-top: 0;
+}
 .join-panel .small-copy {
   margin-top: 20px;
   margin-bottom: 0;

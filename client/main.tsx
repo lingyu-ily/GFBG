@@ -718,6 +718,7 @@ function App() {
   const roomInfo = room && games.find((g) => g.id === room.gameId);
   const roomUi = room && gameUis[room.gameId];
   const Table = roomUi?.Table;
+  const isCreatingPublic = !!me && !me.isMember && createPublic;
   return (
     <>
       <header className="topbar">
@@ -870,38 +871,43 @@ function App() {
               </button>
               <span className="eyebrow">THE GAME SHELF</span>
               <h1>今天，玩哪一款？</h1>
-              <p>選好遊戲、決定是否公開，再把邀請連結傳給朋友。</p>
+              <p>
+                {me.isMember
+                  ? "選好遊戲、建立房間，再把邀請連結傳給朋友。"
+                  : "選好遊戲、決定是否公開，再把邀請連結傳給朋友。"}
+              </p>
             </section>
-            <section className="games-profile panel">
-              <div>
-                <span className="eyebrow">YOUR NAME AT THE TABLE</span>
-                <h2>先讓朋友認出你</h2>
-                <p>{me.isMember ? "會員名稱由帳號設定管理。" : "暱稱就能開玩；註冊後還能保存對局戰績。"}</p>
-              </div>
-              <div className="games-profile-field">
-                <label htmlFor="games-nickname">{me.isMember ? "你的顯示名稱" : "你的暱稱"}</label>
-                <input
-                  id="games-nickname"
-                  autoComplete="nickname"
-                  maxLength={24}
-                  placeholder="例如：今晚不當衛兵"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  readOnly={me.isMember}
-                />
-                <label className="visibility-choice">
+            {!me.isMember && (
+              <section className="games-profile panel">
+                <div>
+                  <span className="eyebrow">YOUR NAME AT THE TABLE</span>
+                  <h2>先讓朋友認出你</h2>
+                  <p>暱稱就能開玩；註冊後還能保存對局戰績。</p>
+                </div>
+                <div className="games-profile-field">
+                  <label htmlFor="games-nickname">你的暱稱</label>
                   <input
-                    type="checkbox"
-                    checked={createPublic}
-                    onChange={(event) => setCreatePublic(event.target.checked)}
+                    id="games-nickname"
+                    autoComplete="nickname"
+                    maxLength={24}
+                    placeholder="例如：今晚不當衛兵"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
                   />
-                  <span>
-                    <strong>公開顯示在首頁</strong>
-                    <small>任何人都能找到、加入或旁觀；之後仍可切回私人。</small>
-                  </span>
-                </label>
-              </div>
-            </section>
+                  <label className="visibility-choice">
+                    <input
+                      type="checkbox"
+                      checked={createPublic}
+                      onChange={(event) => setCreatePublic(event.target.checked)}
+                    />
+                    <span>
+                      <strong>公開顯示在首頁</strong>
+                      <small>任何人都能找到、加入或旁觀；之後仍可切回私人。</small>
+                    </span>
+                  </label>
+                </div>
+              </section>
+            )}
             <section className="library games-library">
               <div className="section-heading">
                 <div>
@@ -958,7 +964,7 @@ function App() {
                               await saveName();
                               const { id } = await api(
                                 "/rooms",
-                                { gameId: g.id, isPublic: createPublic },
+                                { gameId: g.id, isPublic: isCreatingPublic },
                                 me.csrf,
                               );
                               await refreshMe();
@@ -966,7 +972,7 @@ function App() {
                             })
                           }
                         >
-                          建立{createPublic ? "公開" : "私人"}房間 <span aria-hidden="true">↗</span>
+                          建立{isCreatingPublic ? "公開" : "私人"}房間 <span aria-hidden="true">↗</span>
                         </button>
                         <small>
                           {name.trim()
@@ -1007,17 +1013,21 @@ function App() {
                 </button>
               </div>
               <aside className="join-panel">
-                <span className="eyebrow">YOUR SEAT AT THE TABLE</span>
-                <h2>先讓朋友認出你</h2>
-                <label htmlFor="nickname">你的暱稱</label>
-                <input
-                  id="nickname"
-                  autoComplete="nickname"
-                  maxLength={24}
-                  placeholder="例如：今晚不當衛兵"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
+                {!me.isMember && (
+                  <>
+                    <span className="eyebrow">YOUR SEAT AT THE TABLE</span>
+                    <h2>先讓朋友認出你</h2>
+                    <label htmlFor="nickname">你的暱稱</label>
+                    <input
+                      id="nickname"
+                      autoComplete="nickname"
+                      maxLength={24}
+                      placeholder="例如：今晚不當衛兵"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                    />
+                  </>
+                )}
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
@@ -1051,9 +1061,11 @@ function App() {
                     </button>
                   </div>
                 </form>
-                <p className="muted small-copy">
-                  暱稱就能玩。註冊或登入後，可保存你的對局戰績。
-                </p>
+                {!me.isMember && (
+                  <p className="muted small-copy">
+                    暱稱就能玩。註冊或登入後，可保存你的對局戰績。
+                  </p>
+                )}
               </aside>
             </section>
             <section className="public-rooms">
